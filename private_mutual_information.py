@@ -1,3 +1,4 @@
+import math
 import time
 from collections import defaultdict
 
@@ -16,24 +17,29 @@ class PrivateMutualInformation:
         # Preprocess the 'sex' column
         self.adult['sex'] = self.adult['sex'].apply(lambda x: 0 if x.startswith('Male') else 1)
 
-    def calculate(self):
-        print("Computing mutual information between 'sex' and 'income' treating them as private")
+    def calculate(self, column_name_1, column_name_2):
+        print(f"Computing mutual information between '{column_name_1}' and '{column_name_2}' treating them as private")
 
         # Encode sex and income
-        sex_encoded = LabelEncoder().fit_transform(self.adult['sex'])
-        income_encoded = LabelEncoder().fit_transform(self.adult['income'])
+        column_1_encoded = LabelEncoder().fit_transform(self.adult[column_name_1])
+        column_2_encoded = LabelEncoder().fit_transform(self.adult[column_name_2])
 
         # Compute F
         start_time = time.time()  # Record start time
 
-        counts = np.zeros((len(np.unique(sex_encoded)), len(np.unique(income_encoded))))
-        for s, inc in zip(sex_encoded, income_encoded):
+        num_unique_column_1 = len(np.unique(column_1_encoded))
+        num_unique_column_2 = len(np.unique(column_2_encoded))
+        counts = np.zeros((num_unique_column_1, num_unique_column_2))
+        for s, inc in zip(column_1_encoded, column_2_encoded):
             counts[s, inc] += 1
-        mi = self._getF(counts.flatten(), [2, 2])[0]
+        if [num_unique_column_1, num_unique_column_2] == [2, 2]:
+            mi = self._getF(counts.flatten(), list(counts.shape))[0]
+        else:
+            mi = self._getF_multiclass(counts)
 
         end_time = time.time()  # Record end time
         elapsed_time = end_time - start_time
-        print(f"Differentially-Private Mutual Information between 'sex' and 'income': {mi:.4f}. "
+        print(f"Differentially-Private Mutual Information between '{column_name_1}' and '{column_name_2}': {mi:.4f}. "
               f"Calculation took {elapsed_time:.3f} seconds.")
 
     @staticmethod
@@ -74,8 +80,8 @@ class PrivateMutualInformation:
             bounds = list(widths)
             bounds[t] = 1  # always 0
 
-            current_map = {(0, 0): 0}  # current_map[(a, b)] = val means that for partial sum a of class 0 the best
-            # achievable partial sum for class 1 is val, so that val >= b
+            current_map = {0: 0}  # current_map[a] = b means that for partial sum a of class 0 the best
+            # achievable partial sum for class 1 is b
             values = [0] * num_dims
 
             while True:
@@ -88,11 +94,12 @@ class PrivateMutualInformation:
 
                 # Update DP map
                 next_map = defaultdict(int)
-                for (a, b), val in current_map.items():
+                for a, b in current_map.items():
                     a_new = min(a + int(conditional[0]), ceil)
                     b_new = min(b + int(conditional[1]), ceil)
-                    next_map[(a_new, b)] = max(next_map[(a_new, b)], b_new)
-                    next_map[(a, b_new)] = max(next_map[(a, b_new)], b)
+
+                    next_map[a_new] = max(next_map.get(a_new, 0), b)
+                    next_map[a] = max(next_map.get(a, 0), b_new)
                 current_map = next_map
 
                 if not PrivateMutualInformation._inc(values, bounds):
@@ -100,34 +107,115 @@ class PrivateMutualInformation:
 
             # Compute best score
             best = -total
-            for a, b in current_map:
+            for a, b in current_map.items():
                 best = max(best, a + b - total)
             results.append(best / total)
 
         return results
 
     @staticmethod
-    def _getFBinary(counts):
+    def _getF_multiclass(counts_2d, ceil=None):
         """
-        Simplified version of getF for 2x2 contingency tables
-        :param counts: 2D NumPy array of shape [2, 2], where counts[i, j] is the number of samples with variable of
-                       interest = i and label = j
+        Generalized version of getF for multiclass targets.
+        :param counts_2d: 2D NumPy array where counts[i, j] is the count of feature value i and class j
+        :param ceil: Optional ceil for DP constraint. If None, computed as (total + 1) // 2
+        :return: averaged F-score across all classes
         """
-        total = int(counts.sum())
-        ceil = (total + 1) // 2
-        current_map = {(0, 0): 0}
+        num_feat_vals, num_classes = counts_2d.shape
+        total = int(np.sum(counts_2d))
+        if ceil is None:
+            ceil = (total + 1) // 2
 
-        for sex_val in [0, 1]:  # variable of interest
-            next_map = defaultdict(int)
-            for (a, b), val in current_map.items():
-                a_new = min(a + int(counts[sex_val, 0]), ceil)
-                b_new = min(b + int(counts[sex_val, 1]), ceil)
-                next_map[(a_new, b)] = max(next_map[(a_new, b)], b_new)
-                next_map[(a, b_new)] = max(next_map[(a, b_new)], b)
-            current_map = next_map
+        # Store the F-score for each class vs the rest
+        class_fs = []
 
-        best = -total
-        for (a, b) in current_map:
-            best = max(best, a + b - total)
+        for target_class in range(num_classes):
+            # Create a 2D version where:
+            #   class 0 = current class
+            #   class 1 = all others combined
+            collapsed_counts = np.zeros((num_feat_vals, 2))
+            for i in range(num_feat_vals):
+                collapsed_counts[i, 0] = counts_2d[i, target_class]
+                collapsed_counts[i, 1] = np.sum(counts_2d[i]) - collapsed_counts[i, 0]
 
-        return best / total
+            # Apply original F logic on this binary-like table
+            current_map = {0: 0}
+            for i in range(num_feat_vals):
+                val0 = int(collapsed_counts[i, 0])
+                val1 = int(collapsed_counts[i, 1])
+                next_map = defaultdict(int)
+                for a, b in current_map.items():
+                    a_new = min(a + val0, ceil)
+                    b_new = min(b + val1, ceil)
+                    next_map[a_new] = max(next_map[a_new], b)
+                    next_map[a] = max(next_map[a], b_new)
+                current_map = next_map
+
+            best = -total
+            for a, b in current_map.items():
+                best = max(best, a + b - total)
+            f_score = best / total
+            class_fs.append(f_score)
+
+        # Return the average score across all one-vs-rest binary tasks
+        return np.mean(class_fs)
+
+    @staticmethod
+    def _mutual_info(joint):
+        n = len(joint)
+        m = len(joint[0]) if n > 0 else 0
+
+        nsum = [0.0] * n
+        msum = [0.0] * m
+        total = 0.0
+
+        for i in range(n):
+            for j in range(m):
+                val = joint[i][j]
+                nsum[i] += val
+                msum[j] += val
+                total += val
+
+        result = 0.0
+        for i in range(n):
+            for j in range(m):
+                if joint[i][j] > 0:
+                    p_ij = joint[i][j] / total
+                    expected = (nsum[i] * msum[j]) / (total * total)
+                    result += p_ij * math.log2(p_ij / expected)
+        return result
+
+    @staticmethod
+    def _getI(counts, widths):
+        """
+        Translated version of table::getI from C++
+        :param counts: flattened list of counts
+        :param widths: number of categories per dimension
+        :return: list of mutual information scores (1 per dimension)
+        """
+        results = []
+        num_dims = len(widths)
+
+        for t in range(num_dims):
+            bounds = list(widths)
+            bounds[t] = 1  # always 0
+
+            values = [0] * num_dims
+            joint = []
+
+            while True:
+                conditional = []
+                for x in range(widths[t]):
+                    values[t] = x
+                    idx = PrivateMutualInformation._encode(values, widths)
+                    conditional.append(counts[idx])
+                values[t] = 0  # reset
+
+                joint.append(conditional)
+
+                if not PrivateMutualInformation._inc(values, bounds):
+                    break
+
+            results.append(PrivateMutualInformation._mutual_info(joint))
+
+        return results
