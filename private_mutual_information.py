@@ -20,25 +20,21 @@ class PrivateMutualInformation:
     def calculate(self, column_name_1, column_name_2):
         print(f"Computing mutual information between '{column_name_1}' and '{column_name_2}' treating them as private")
 
-        # Encode sex and income
-        column_1_encoded = LabelEncoder().fit_transform(self.adult[column_name_1])
-        column_2_encoded = LabelEncoder().fit_transform(self.adult[column_name_2])
+        col1 = self.adult[column_name_1]
+        col2 = self.adult[column_name_2]
 
-        # Compute F
-        start_time = time.time()  # Record start time
+        start_time = time.time()
 
-        num_unique_column_1 = len(np.unique(column_1_encoded))
-        num_unique_column_2 = len(np.unique(column_2_encoded))
-        counts = np.zeros((num_unique_column_1, num_unique_column_2))
-        for s, inc in zip(column_1_encoded, column_2_encoded):
-            counts[s, inc] += 1
-        if [num_unique_column_1, num_unique_column_2] == [2, 2]:
-            mi = self._getF(counts.flatten(), list(counts.shape))[0]
+        unique_1 = self.adult[column_name_1].nunique()
+        unique_2 = self.adult[column_name_2].nunique()
+
+        if unique_1 == 2 and unique_2 == 2:
+            mi = self._getF(col1, col2)
         else:
-            mi = self._getF_multiclass(counts)
+            mi = self._getF_multiclass(col1, col2)
+        mi += 0.5  # mapping
 
-        end_time = time.time()  # Record end time
-        elapsed_time = end_time - start_time
+        elapsed_time = time.time() - start_time
         print(f"Differentially-Private Mutual Information between '{column_name_1}' and '{column_name_2}': {mi:.4f}. "
               f"Calculation took {elapsed_time:.3f} seconds.")
 
@@ -63,14 +59,20 @@ class PrivateMutualInformation:
                 return True
         return False
 
-    @staticmethod
-    def _getF(counts, widths):
+    def _getF(self, data1, data2):
         """
-        Python translation of table::getF from C++
-        :param counts: 1D list or np.array of flattened counts
-        :param widths: list of ints (width per dimension)
-        :returns: list of F scores, one for each variable
+        Compute F from two binary columns using the DP dynamic programming approach.
+        Assumes both data1 and data2 are binary (0 or 1).
         """
+        x = LabelEncoder().fit_transform(data1)
+        y = LabelEncoder().fit_transform(data2)
+
+        counts = np.zeros((2, 2))
+        for xi, yi in zip(x, y):
+            counts[xi, yi] += 1
+
+        widths = list(counts.shape)
+        counts = counts.flatten()
         total = counts.sum().item()
         ceil = (total + 1) // 2
         num_dims = len(widths)
@@ -80,142 +82,107 @@ class PrivateMutualInformation:
             bounds = list(widths)
             bounds[t] = 1  # always 0
 
-            current_map = {0: 0}  # current_map[a] = b means that for partial sum a of class 0 the best
-            # achievable partial sum for class 1 is b
+            current_map = {0: 0}
             values = [0] * num_dims
 
             while True:
-                # Build conditional vector along target dimension t
                 conditional = []
                 for x in range(widths[t]):
                     values[t] = x
-                    conditional.append(counts[PrivateMutualInformation._encode(values, widths)])
-                values[t] = 0  # reset
+                    conditional.append(counts[self._encode(values, widths)])
+                values[t] = 0
 
-                # Update DP map
                 next_map = defaultdict(int)
                 for a, b in current_map.items():
                     a_new = min(a + int(conditional[0]), ceil)
                     b_new = min(b + int(conditional[1]), ceil)
-
                     next_map[a_new] = max(next_map.get(a_new, 0), b)
                     next_map[a] = max(next_map.get(a, 0), b_new)
                 current_map = next_map
 
-                if not PrivateMutualInformation._inc(values, bounds):
+                if not self._inc(values, bounds):
                     break
 
-            # Compute best score
             best = -total
             for a, b in current_map.items():
                 best = max(best, a + b - total)
             results.append(best / total)
 
-        return results
+        return results[0]
 
     @staticmethod
-    def _getF_multiclass(counts_2d, ceil=None):
-        """
-        Generalized version of getF for multiclass targets.
-        :param counts_2d: 2D NumPy array where counts[i, j] is the count of feature value i and class j
-        :param ceil: Optional ceil for DP constraint. If None, computed as (total + 1) // 2
-        :return: averaged F-score across all classes
-        """
-        num_feat_vals, num_classes = counts_2d.shape
-        total = int(np.sum(counts_2d))
-        if ceil is None:
-            ceil = (total + 1) // 2
-
-        # Store the F-score for each class vs the rest
-        class_fs = []
-
-        for target_class in range(num_classes):
-            # Create a 2D version where:
-            #   class 0 = current class
-            #   class 1 = all others combined
-            collapsed_counts = np.zeros((num_feat_vals, 2))
-            for i in range(num_feat_vals):
-                collapsed_counts[i, 0] = counts_2d[i, target_class]
-                collapsed_counts[i, 1] = np.sum(counts_2d[i]) - collapsed_counts[i, 0]
-
-            # Apply original F logic on this binary-like table
-            current_map = {0: 0}
-            for i in range(num_feat_vals):
-                val0 = int(collapsed_counts[i, 0])
-                val1 = int(collapsed_counts[i, 1])
-                next_map = defaultdict(int)
-                for a, b in current_map.items():
-                    a_new = min(a + val0, ceil)
-                    b_new = min(b + val1, ceil)
-                    next_map[a_new] = max(next_map[a_new], b)
-                    next_map[a] = max(next_map[a], b_new)
-                current_map = next_map
-
-            best = -total
-            for a, b in current_map.items():
-                best = max(best, a + b - total)
-            f_score = best / total
-            class_fs.append(f_score)
-
-        # Return the average score across all one-vs-rest binary tasks
-        return np.mean(class_fs)
+    def int_to_binary_vector(val, num_bits):
+        return [int(x) for x in format(val, f'0{num_bits}b')]
 
     @staticmethod
-    def _mutual_info(joint):
-        n = len(joint)
-        m = len(joint[0]) if n > 0 else 0
-
-        nsum = [0.0] * n
-        msum = [0.0] * m
-        total = 0.0
-
-        for i in range(n):
-            for j in range(m):
-                val = joint[i][j]
-                nsum[i] += val
-                msum[j] += val
-                total += val
-
-        result = 0.0
-        for i in range(n):
-            for j in range(m):
-                if joint[i][j] > 0:
-                    p_ij = joint[i][j] / total
-                    expected = (nsum[i] * msum[j]) / (total * total)
-                    result += p_ij * math.log2(p_ij / expected)
-        return result
-
-    @staticmethod
-    def _getI(counts, widths):
+    def encode_column_to_bits(column):
         """
-        Translated version of table::getI from C++
-        :param counts: flattened list of counts
-        :param widths: number of categories per dimension
-        :return: list of mutual information scores (1 per dimension)
+        Convert a categorical column to ⌈log2(n)⌉ binary features.
+        Returns a 2D NumPy array of shape (n_samples, n_bits)
         """
-        results = []
-        num_dims = len(widths)
+        le = LabelEncoder()
+        encoded = le.fit_transform(column)
+        max_val = np.max(encoded)
+        num_bits = int(np.ceil(np.log2(max_val + 1)))
+        return np.array([PrivateMutualInformation.int_to_binary_vector(val, num_bits) for val in encoded])
 
-        for t in range(num_dims):
-            bounds = list(widths)
-            bounds[t] = 1  # always 0
+    def _getF_multiclass(self, data1, data2):
+        """
+        Preprocess non-binary data into bitwise binary columns and compute F score per bit pair.
+        """
 
-            values = [0] * num_dims
-            joint = []
+        def preprocess_column(column, num_bins=16):
+            """Binning if needed, then binary encode"""
+            if column.dtype.kind in 'f':  # float = continuous
+                # Equal-width binning
+                binned = np.digitize(column, np.histogram_bin_edges(column, bins=num_bins)) - 1
+            else:
+                binned = LabelEncoder().fit_transform(column)
+            return self.encode_column_to_bits(binned)
 
-            while True:
-                conditional = []
-                for x in range(widths[t]):
-                    values[t] = x
-                    idx = PrivateMutualInformation._encode(values, widths)
-                    conditional.append(counts[idx])
-                values[t] = 0  # reset
+        col1_bits = preprocess_column(np.array(data1))
+        col2_bits = preprocess_column(np.array(data2))
 
-                joint.append(conditional)
+        n_bits_col1 = col1_bits.shape[1]
+        n_bits_col2 = col2_bits.shape[1]
 
-                if not PrivateMutualInformation._inc(values, bounds):
-                    break
+        F_scores = []
 
-            results.append(PrivateMutualInformation._mutual_info(joint))
+        for i in range(n_bits_col1):
+            bit1 = col1_bits[:, i]
+            for j in range(n_bits_col2):
+                bit2 = col2_bits[:, j]
 
-        return results
+                # Skip degenerate bit-columns
+                if len(np.unique(bit1)) < 2 or len(np.unique(bit2)) < 2:
+                    continue
+
+                f_score = self._getF(bit1, bit2)
+                F_scores.append(f_score)
+
+        return np.mean(F_scores) if F_scores else 0.0 # you can also return max(F_scores), etc.
+
+    def _getF_multiclass_alternative(self, data1, data2):
+        """
+        One-vs-all generalization of F to multiclass variables.
+        For each unique value in data1 and data2, convert to binary and compute F.
+        Returns the average F over all (one-vs-all x one-vs-all) pairs.
+        """
+        data1 = np.array(LabelEncoder().fit_transform(data1))
+        data2 = np.array(LabelEncoder().fit_transform(data2))
+
+        classes1 = np.unique(data1)
+        classes2 = np.unique(data2)
+
+        F_scores = []
+
+        for c1 in classes1:
+            binary1 = (data1 == c1).astype(int)  # one-vs-all
+            for c2 in classes2:
+                binary2 = (data2 == c2).astype(int)  # one-vs-all
+                if len(np.unique(binary1)) < 2 or len(np.unique(binary2)) < 2:
+                    continue
+                f = self._getF(binary1, binary2)
+                F_scores.append(f)
+
+        return np.mean(F_scores) if F_scores else 0.0
