@@ -2,12 +2,11 @@ import math
 import time
 
 import numpy as np
-from sklearn.metrics import mutual_info_score
 from sklearn.preprocessing import LabelEncoder
 from ucimlrepo import fetch_ucirepo
 
 
-class NonPrivateMutualInformation:
+class MutualInformation:
 
     def __init__(self):
         self.adult = fetch_ucirepo(id=2).data['original']

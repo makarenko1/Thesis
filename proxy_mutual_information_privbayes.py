@@ -1,4 +1,3 @@
-import math
 import time
 from collections import defaultdict
 
@@ -7,7 +6,7 @@ from sklearn.preprocessing import LabelEncoder
 from ucimlrepo import fetch_ucirepo
 
 
-class PrivateMutualInformation:
+class ProxyMutualInformationPrivbayes:
 
     def __init__(self):
         self.adult = fetch_ucirepo(id=2).data['original']
@@ -124,7 +123,7 @@ class PrivateMutualInformation:
         encoded = le.fit_transform(column)
         max_val = np.max(encoded)
         num_bits = int(np.ceil(np.log2(max_val + 1)))
-        return np.array([PrivateMutualInformation.int_to_binary_vector(val, num_bits) for val in encoded])
+        return np.array([ProxyMutualInformationPrivbayes.int_to_binary_vector(val, num_bits) for val in encoded])
 
     def _getF_multiclass(self, data1, data2):
         """
