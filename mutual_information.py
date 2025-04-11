@@ -11,6 +11,7 @@ class MutualInformation:
         self.dataset = pd.read_csv(datapath)
 
     def calculate(self, column_name_1, column_name_2):
+        self.dataset.replace(["NA", "N/A", ""], pd.NA, inplace=True)
         self.dataset.dropna(inplace=True, subset=[column_name_1, column_name_2])
         self.dataset[column_name_1] = LabelEncoder().fit_transform(self.dataset[column_name_1])
         self.dataset[column_name_2] = LabelEncoder().fit_transform(self.dataset[column_name_2])

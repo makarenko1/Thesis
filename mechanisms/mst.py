@@ -3,6 +3,7 @@
 import itertools
 
 import numpy as np
+import pandas as pd
 from scipy import sparse
 from sklearn.preprocessing import LabelEncoder
 
@@ -117,36 +118,16 @@ def reverse_data(data, supports):
     return Dataset(df, newdom)
 
 
-def default_params():
-    """
-    Return default parameters to run this program
-
-    :returns: a dictionary of default parameter settings for each command line argument
-    """
-    params = {}
-    params['dataset'] = '../data/dataset.csv'
-    params['domain'] = '../data/dataset-domain-race-income.json'
-    params['epsilon'] = 10000000
-    params['delta'] = 0.0000000000000000000000000000000001
-    params['degree'] = 2
-    params['num_marginals'] = None
-    params['max_cells'] = 100000
-
-    return params
-
-
 def run_mst(dataset, domain):
     args = {}
     args['dataset'] = dataset
     args['domain'] = domain
     args['epsilon'] = 10000000
-    args['delta'] = 0.0000000000000000000000000000000001
-    args['degree'] = 2
-    args['num_marginals'] = None
-    args['max_cells'] = 100000
+    args['delta'] = 0.00000000000000000000000000000000001
 
     data = Dataset.load(args['dataset'], args['domain'])
-    data.df.dropna(inplace=True, subset=list(data.domain.attrs))
+    data.df.replace(["NA", "N/A", ""], pd.NA, inplace=True)
+    data.df.dropna(inplace=True, subset=list(data.domain.attrs), how="any", ignore_index=True, axis=0)
     for attr in list(data.domain.attrs):
         data.df[attr] = LabelEncoder().fit_transform(data.df[attr])
     mi_proxy = MST(data, args['epsilon'], args['delta'])

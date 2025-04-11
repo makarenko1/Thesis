@@ -3,6 +3,7 @@ from proxy_mutual_information_nist_contest import ProxyMutualInformationNistCont
 from mutual_information import MutualInformation
 
 if __name__ == "__main__":
+    print("Adult dataset results:")
     MutualInformation('data/adult.csv').calculate("sex", "income>50K")
     ProxyMutualInformationPrivbayes('data/adult.csv').calculate("sex", "income>50K")
     ProxyMutualInformationNistContest('data/adult.csv').calculate("sex", "income>50K",
@@ -17,6 +18,7 @@ if __name__ == "__main__":
 
     print()
 
+    print("\nStackoverflow dataset results:")
     MutualInformation('data/stackoverflow.csv').calculate("Country", "EdLevel")
     ProxyMutualInformationPrivbayes('data/stackoverflow.csv').calculate("Country", "EdLevel")
     ProxyMutualInformationNistContest('data/stackoverflow.csv').calculate(
@@ -42,3 +44,25 @@ if __name__ == "__main__":
     ProxyMutualInformationPrivbayes('data/stackoverflow.csv').calculate("Country", "SOVisitFreq")
     ProxyMutualInformationNistContest('data/stackoverflow.csv').calculate(
         "Country", "SOVisitFreq", 'data/stackoverflow-domain-country-sovisitfreq.json')
+
+    print()
+
+    print("\nCompas dataset results:")
+    MutualInformation('data/compas-scores.csv').calculate("race", "c_charge_desc")
+    ProxyMutualInformationPrivbayes('data/compas-scores.csv').calculate("race", "c_charge_desc")
+    ProxyMutualInformationNistContest('data/compas-scores.csv').calculate(
+        "race", "c_charge_desc", 'data/compas-domain-race-c_charge_desc.json')
+
+    print()
+
+    MutualInformation('data/compas-scores.csv').calculate("race", "score_text")
+    ProxyMutualInformationPrivbayes('data/compas-scores.csv').calculate("race", "score_text")
+    ProxyMutualInformationNistContest('data/compas-scores.csv').calculate(
+        "race", "score_text", 'data/compas-domain-race-score_text.json')
+
+    print()
+
+    MutualInformation('data/compas-scores.csv').calculate("race", "sex")
+    ProxyMutualInformationPrivbayes('data/compas-scores.csv').calculate("race", "sex")
+    ProxyMutualInformationNistContest('data/compas-scores.csv').calculate(
+        "race", "sex", 'data/compas-domain-race-sex.json')
