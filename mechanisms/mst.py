@@ -4,6 +4,7 @@ import itertools
 
 import numpy as np
 from scipy import sparse
+from sklearn.preprocessing import LabelEncoder
 
 from mechanisms.cdp2adp import cdp_rho
 from src.mbi import FactoredInference, Dataset, Domain
@@ -123,8 +124,8 @@ def default_params():
     :returns: a dictionary of default parameter settings for each command line argument
     """
     params = {}
-    params['dataset'] = '../data/adult.csv'
-    params['domain'] = '../data/adult-domain-race-income.json'
+    params['dataset'] = '../data/dataset.csv'
+    params['domain'] = '../data/dataset-domain-race-income.json'
     params['epsilon'] = 10000000
     params['delta'] = 0.0000000000000000000000000000000001
     params['degree'] = 2
@@ -134,10 +135,10 @@ def default_params():
     return params
 
 
-def run_mst(dataset=None, domain=None):
+def run_mst(dataset, domain):
     args = {}
-    args['dataset'] = dataset if dataset else 'data/adult.csv'
-    args['domain'] = domain if domain else 'data/adult-domain-race-income.json'
+    args['dataset'] = dataset
+    args['domain'] = domain
     args['epsilon'] = 10000000
     args['delta'] = 0.0000000000000000000000000000000001
     args['degree'] = 2
@@ -145,5 +146,8 @@ def run_mst(dataset=None, domain=None):
     args['max_cells'] = 100000
 
     data = Dataset.load(args['dataset'], args['domain'])
+    data.df.dropna(inplace=True, subset=list(data.domain.attrs))
+    for attr in list(data.domain.attrs):
+        data.df[attr] = LabelEncoder().fit_transform(data.df[attr])
     mi_proxy = MST(data, args['epsilon'], args['delta'])
     return mi_proxy

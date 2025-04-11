@@ -1,4 +1,3 @@
-import math
 import time
 
 import numpy as np
@@ -8,24 +7,17 @@ from sklearn.preprocessing import LabelEncoder
 
 class MutualInformation:
 
-    def __init__(self):
-        self.adult = pd.read_csv('data/adult.csv')
-        self.adult.dropna(inplace=True)
+    def __init__(self, datapath):
+        self.dataset = pd.read_csv(datapath)
 
     def calculate(self, column_name_1, column_name_2):
-        # Encode sex and income
-        column_1_encoded = LabelEncoder().fit_transform(self.adult[column_name_1])
-        column_2_encoded = LabelEncoder().fit_transform(self.adult[column_name_2])
+        self.dataset.dropna(inplace=True, subset=[column_name_1, column_name_2])
+        self.dataset[column_name_1] = LabelEncoder().fit_transform(self.dataset[column_name_1])
+        self.dataset[column_name_2] = LabelEncoder().fit_transform(self.dataset[column_name_2])
 
         # Compute mutual information
         start_time = time.time()  # Record start time
 
-        num_unique_column_1 = len(np.unique(column_1_encoded))
-        num_unique_column_2 = len(np.unique(column_2_encoded))
-        counts = np.zeros((num_unique_column_1, num_unique_column_2))
-        for s, inc in zip(column_1_encoded, column_2_encoded):
-            counts[s, inc] += 1
-        # mi = self._getI(counts.flatten(), list(counts.shape))[0]
         mi = self._getI(column_name_1, column_name_2)
 
         end_time = time.time()  # Record end time
@@ -34,28 +26,20 @@ class MutualInformation:
               f"{mi:.4f}. Calculation took {elapsed_time:.3f} seconds.")
 
     def _getI(self, column_name_1, column_name_2):
-        """
-        Compute mutual information I(X; Y) from two categorical data columns using log base 2.
-        :return: MI value
-        """
-        import numpy as np
-        from sklearn.preprocessing import LabelEncoder
 
-        # Encode to integers
-        column_1_encoded = LabelEncoder().fit_transform(self.adult[column_name_1])
-        column_2_encoded = LabelEncoder().fit_transform(self.adult[column_name_2])
+        col1 = self.dataset[column_name_1]
+        col2 = self.dataset[column_name_2]
 
-        size_X = len(np.unique(column_1_encoded))
-        size_Y = len(np.unique(column_2_encoded))
+        size_X = col1.max() + 1
+        size_Y = col2.max() + 1
 
-        # Build joint count table
         counts = np.zeros((size_X, size_Y))
-        for xi, yi in zip(column_1_encoded, column_2_encoded):
-            counts[xi, yi] += 1
+        for x, y in zip(col1, col2):
+            counts[x, y] += 1
 
         total = counts.sum()
         if total == 0:
-            return [0.0]
+            return 0.0
 
         P_xy = counts / total
         P_x = P_xy.sum(axis=1, keepdims=True)
@@ -66,3 +50,4 @@ class MutualInformation:
         MI = np.sum(P_xy[mask] * np.log2(ratio[mask]))
 
         return MI
+
