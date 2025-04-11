@@ -3,10 +3,12 @@ from proxy_mutual_information_nist_contest import ProxyMutualInformationNistCont
 from mutual_information import MutualInformation
 
 if __name__ == "__main__":
-    MutualInformation().calculate("sex", "income")
-    ProxyMutualInformationPrivbayes().calculate("sex", "income")
-    ProxyMutualInformationNistContest().calculate("sex", "income")
+    MutualInformation().calculate("sex", "income>50K")
+    ProxyMutualInformationPrivbayes().calculate("sex", "income>50K")
+    ProxyMutualInformationNistContest().calculate("sex", "income>50K", 'data/adult-domain-sex-income.json')
 
-    MutualInformation().calculate("race", "income")
-    ProxyMutualInformationPrivbayes().calculate("race", "income")
-    ProxyMutualInformationNistContest().calculate("race", "income")
+    print()
+
+    MutualInformation().calculate("race", "income>50K")
+    ProxyMutualInformationPrivbayes().calculate("race", "income>50K")
+    ProxyMutualInformationNistContest().calculate("race", "income>50K", 'data/adult-domain-race-income.json')

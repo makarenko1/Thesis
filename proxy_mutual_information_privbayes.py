@@ -2,23 +2,17 @@ import time
 from collections import defaultdict
 
 import numpy as np
+import pandas as pd
 from sklearn.preprocessing import LabelEncoder
-from ucimlrepo import fetch_ucirepo
 
 
 class ProxyMutualInformationPrivbayes:
 
     def __init__(self):
-        self.adult = fetch_ucirepo(id=2).data['original']
+        self.adult = pd.read_csv('data/adult.csv')
         self.adult.dropna(inplace=True)
-        # Preprocess the 'income' column
-        self.adult['income'] = self.adult['income'].apply(lambda x: 0 if x.startswith('<=50K') else 1)
-        # Preprocess the 'sex' column
-        self.adult['sex'] = self.adult['sex'].apply(lambda x: 0 if x.startswith('Male') else 1)
 
     def calculate(self, column_name_1, column_name_2):
-        print(f"Computing mutual information between '{column_name_1}' and '{column_name_2}' treating them as private")
-
         col1 = self.adult[column_name_1]
         col2 = self.adult[column_name_2]
 
@@ -34,7 +28,7 @@ class ProxyMutualInformationPrivbayes:
         mi += 0.5  # mapping
 
         elapsed_time = time.time() - start_time
-        print(f"Differentially-Private Mutual Information between '{column_name_1}' and '{column_name_2}': {mi:.4f}. "
+        print(f"Privbayes: Proxy Mutual Information between '{column_name_1}' and '{column_name_2}': {mi:.4f}. "
               f"Calculation took {elapsed_time:.3f} seconds.")
 
     @staticmethod
