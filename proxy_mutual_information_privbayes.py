@@ -31,6 +31,7 @@ class ProxyMutualInformationPrivbayes:
         elapsed_time = time.time() - start_time
         print(f"Privbayes: Proxy Mutual Information between '{column_name_1}' and '{column_name_2}': {mi:.4f}. "
               f"Calculation took {elapsed_time:.3f} seconds.")
+        return round(mi, 4)
 
     @staticmethod
     def _encode(values, widths):

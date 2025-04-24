@@ -25,6 +25,7 @@ class MutualInformation:
         elapsed_time = end_time - start_time
         print(f"Regular Mutual Information between '{column_name_1}' and '{column_name_2}': "
               f"{mi:.4f}. Calculation took {elapsed_time:.3f} seconds.")
+        return round(mi, 4)
 
     def _getI(self, column_name_1, column_name_2):
 
