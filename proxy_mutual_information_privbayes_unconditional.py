@@ -6,30 +6,30 @@ import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 
 
-class ProxyMutualInformationPrivbayes:
+class ProxyMutualInformationPrivbayesUnconditional:
 
     def __init__(self, datapath):
         self.dataset = pd.read_csv(datapath)
 
-    def calculate(self, column_name_1, column_name_2):
+    def calculate(self, s_col, o_col):
         self.dataset.replace(["NA", "N/A", ""], pd.NA, inplace=True)
-        self.dataset.dropna(inplace=True, subset=[column_name_1, column_name_2])
-        self.dataset[column_name_1] = LabelEncoder().fit_transform(self.dataset[column_name_1])
-        self.dataset[column_name_2] = LabelEncoder().fit_transform(self.dataset[column_name_2])
+        self.dataset.dropna(inplace=True, subset=[s_col, o_col])
+        self.dataset[s_col] = LabelEncoder().fit_transform(self.dataset[s_col])
+        self.dataset[o_col] = LabelEncoder().fit_transform(self.dataset[o_col])
 
         start_time = time.time()
 
-        unique_1 = self.dataset[column_name_1].nunique()
-        unique_2 = self.dataset[column_name_2].nunique()
+        unique_1 = self.dataset[s_col].nunique()
+        unique_2 = self.dataset[o_col].nunique()
 
         if unique_1 == 2 and unique_2 == 2:
-            mi = self._getF(self.dataset[column_name_1], self.dataset[column_name_2])
+            mi = self._getF(self.dataset[s_col], self.dataset[o_col])
         else:
-            mi = self._getF_multiclass(column_name_1, column_name_2)
+            mi = self._getF_multiclass_unconditional(s_col, o_col)
         mi += 0.5  # mapping
 
         elapsed_time = time.time() - start_time
-        print(f"Privbayes: Proxy Mutual Information between '{column_name_1}' and '{column_name_2}': {mi:.4f}. "
+        print(f"Privbayes: Proxy Mutual Information between '{s_col}' and '{o_col}': {mi:.4f}. "
               f"Calculation took {elapsed_time:.3f} seconds.")
         return round(mi, 4)
 
@@ -54,13 +54,13 @@ class ProxyMutualInformationPrivbayes:
                 return True
         return False
 
-    def _getF(self, col_1, col_2):
+    def _getF(self, s_col_values, o_col_values):
         """
         Compute F from two binary columns using the DP dynamic programming approach.
         """
 
         counts = np.zeros((2, 2))
-        for xi, yi in zip(col_1, col_2):
+        for xi, yi in zip(s_col_values, o_col_values):
             counts[xi, yi] += 1
 
         widths = list(counts.shape)
@@ -79,8 +79,8 @@ class ProxyMutualInformationPrivbayes:
 
             while True:
                 conditional = []
-                for col_1 in range(widths[t]):
-                    values[t] = col_1
+                for s_col_values in range(widths[t]):
+                    values[t] = s_col_values
                     conditional.append(counts[self._encode(values, widths)])
                 values[t] = 0
 
@@ -116,9 +116,9 @@ class ProxyMutualInformationPrivbayes:
         encoded = le.fit_transform(column)
         max_val = np.max(encoded)
         num_bits = int(np.ceil(np.log2(max_val + 1)))
-        return np.array([ProxyMutualInformationPrivbayes.int_to_binary_vector(val, num_bits) for val in encoded])
+        return np.array([ProxyMutualInformationPrivbayesUnconditional.int_to_binary_vector(val, num_bits) for val in encoded])
 
-    def _getF_multiclass(self, column_name_1, column_name_2):
+    def _getF_multiclass_unconditional(self, s_col, o_col):
         """
         Preprocess non-binary data into bitwise binary columns and compute F score per bit pair.
         """
@@ -132,8 +132,8 @@ class ProxyMutualInformationPrivbayes:
                 binned = LabelEncoder().fit_transform(column)
             return self.encode_column_to_bits(binned)
 
-        col_1 = self.dataset[column_name_1]
-        col_2 = self.dataset[column_name_2]
+        col_1 = self.dataset[s_col]
+        col_2 = self.dataset[o_col]
 
         col_1_bits = preprocess_column(np.array(col_1))
         col_2_bits = preprocess_column(np.array(col_2))
@@ -157,13 +157,13 @@ class ProxyMutualInformationPrivbayes:
 
         return np.mean(F_scores) if F_scores else 0.0 # you can also return max(F_scores), etc.
 
-    def _getF_multiclass_alternative(self, column_name_1, column_name_2):
+    def _getF_multiclass_alternative(self, s_col, o_col):
         """
         One-vs-all generalization of F to multiclass variables.
         Returns the average F over all (one-vs-all x one-vs-all) pairs.
         """
-        col_1 = self.dataset[column_name_1]
-        col_2 = self.dataset[column_name_2]
+        col_1 = self.dataset[s_col]
+        col_2 = self.dataset[o_col]
 
         classes_1 = np.unique(col_1)
         classes_2 = np.unique(col_2)

@@ -19,10 +19,10 @@ and does not rely on public provisional data for measurement selection.
 """
 
 
-def MST(data, epsilon, delta):
+def MST_unconditional(data, epsilon, delta, s_col, o_col):
     rho = cdp_rho(epsilon, delta)
     sigma = np.sqrt(3/(2*rho))
-    cliques = [(col,) for col in data.domain]
+    cliques = [(s_col,), (o_col,)]
     log1 = measure(data, cliques, sigma)
     data, log1, undo_compress_fn = compress_domain(data, log1)
     weights = compute_weights(data, log1)
@@ -118,17 +118,16 @@ def reverse_data(data, supports):
     return Dataset(df, newdom)
 
 
-def run_mst(dataset, domain):
-    args = {}
-    args['dataset'] = dataset
-    args['domain'] = domain
-    args['epsilon'] = 10000000
-    args['delta'] = 0.00000000000000000000000000000000001
+def run_mst_unconditional(dataset, domain, s_col, o_col):
 
-    data = Dataset.load(args['dataset'], args['domain'])
+    data = Dataset.load(dataset, domain)
     data.df.replace(["NA", "N/A", ""], pd.NA, inplace=True)
-    data.df.dropna(inplace=True, subset=list(data.domain.attrs), how="any", ignore_index=True, axis=0)
-    for attr in list(data.domain.attrs):
+    data.df.dropna(inplace=True, subset=[s_col, o_col], how="any", ignore_index=True, axis=0)
+    for attr in [s_col, o_col]:
         data.df[attr] = LabelEncoder().fit_transform(data.df[attr])
-    mi_proxy = MST(data, args['epsilon'], args['delta'])
+
+    epsilon = 10000000
+    delta = 1e-32
+
+    mi_proxy = MST_unconditional(data, epsilon, delta, s_col, o_col)
     return mi_proxy
