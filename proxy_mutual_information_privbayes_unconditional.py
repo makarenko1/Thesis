@@ -23,7 +23,7 @@ class ProxyMutualInformationPrivbayesUnconditional:
         unique_2 = self.dataset[o_col].nunique()
 
         if unique_1 == 2 and unique_2 == 2:
-            mi = self._getF(self.dataset[s_col], self.dataset[o_col])
+            mi = self._getF(self.dataset[s_col].to_numpy(), self.dataset[o_col].to_numpy())
         else:
             mi = self._getF_multiclass_unconditional(s_col, o_col)
         mi += 0.5  # mapping
@@ -132,21 +132,21 @@ class ProxyMutualInformationPrivbayesUnconditional:
                 binned = LabelEncoder().fit_transform(column)
             return self.encode_column_to_bits(binned)
 
-        col_1 = self.dataset[s_col]
-        col_2 = self.dataset[o_col]
+        s_col_values = self.dataset[s_col].to_numpy()
+        o_col_values = self.dataset[o_col].to_numpy()
 
-        col_1_bits = preprocess_column(np.array(col_1))
-        col_2_bits = preprocess_column(np.array(col_2))
+        s_col_bits = preprocess_column(np.array(s_col_values))
+        o_col_bits = preprocess_column(np.array(o_col_values))
 
-        n_bits_col1 = col_1_bits.shape[1]
-        n_bits_col2 = col_2_bits.shape[1]
+        n_bits_s_col = s_col_bits.shape[1]
+        n_bits_o_col = o_col_bits.shape[1]
 
         F_scores = []
 
-        for i in range(n_bits_col1):
-            bit1 = col_1_bits[:, i]
-            for j in range(n_bits_col2):
-                bit2 = col_2_bits[:, j]
+        for i in range(n_bits_s_col):
+            bit1 = s_col_bits[:, i]
+            for j in range(n_bits_o_col):
+                bit2 = o_col_bits[:, j]
 
                 # Skip degenerate bit-columns
                 if len(np.unique(bit1)) < 2 or len(np.unique(bit2)) < 2:
@@ -155,25 +155,25 @@ class ProxyMutualInformationPrivbayesUnconditional:
                 f_score = self._getF(bit1, bit2)
                 F_scores.append(f_score)
 
-        return np.mean(F_scores) if F_scores else 0.0 # you can also return max(F_scores), etc.
+        return np.mean(F_scores) if F_scores else 0.0
 
     def _getF_multiclass_alternative(self, s_col, o_col):
         """
         One-vs-all generalization of F to multiclass variables.
         Returns the average F over all (one-vs-all x one-vs-all) pairs.
         """
-        col_1 = self.dataset[s_col]
-        col_2 = self.dataset[o_col]
+        s_col_values = self.dataset[s_col].to_numpy()
+        o_col_values = self.dataset[o_col].to_numpy()
 
-        classes_1 = np.unique(col_1)
-        classes_2 = np.unique(col_2)
+        s_col_classes = np.unique(s_col_values)
+        o_col_classes = np.unique(o_col_values)
 
         F_scores = []
 
-        for class_1 in classes_1:
-            binary_1 = (col_1 == class_1).astype(int)  # one-vs-all
-            for class_2 in classes_2:
-                binary_2 = (col_2 == class_2).astype(int)  # one-vs-all
+        for class_1 in s_col_classes:
+            binary_1 = (s_col_values == class_1).astype(int)  # one-vs-all
+            for class_2 in o_col_classes:
+                binary_2 = (o_col_values == class_2).astype(int)  # one-vs-all
                 if len(np.unique(binary_1)) < 2 or len(np.unique(binary_2)) < 2:
                     continue
                 f = self._getF(binary_1, binary_2)

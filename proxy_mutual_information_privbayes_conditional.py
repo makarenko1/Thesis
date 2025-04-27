@@ -25,9 +25,13 @@ class ProxyMutualInformationPrivbayesConditional:
         unique_3 = self.dataset[a_col].nunique()
 
         if unique_1 == 2 and unique_2 == 2 and unique_3 == 2:
-            mi = self._getF(self.dataset[s_col], self.dataset[o_col], self.dataset[a_col])
+            mi = self._getF(self.dataset[s_col].to_numpy(),
+                            self.dataset[o_col].to_numpy(),
+                            self.dataset[a_col].to_numpy())
         else:
-            mi = self._getF_multiclass_conditional(s_col, o_col, a_col)
+            mi = self._getF_multiclass_conditional(self.dataset[s_col].to_numpy(),
+                                                   self.dataset[o_col].to_numpy(),
+                                                   self.dataset[a_col].to_numpy())
         mi += 0.5  # mapping
 
         elapsed_time = time.time() - start_time
@@ -134,7 +138,7 @@ class ProxyMutualInformationPrivbayesConditional:
         num_bits = int(np.ceil(np.log2(max_val + 1)))
         return np.array([ProxyMutualInformationPrivbayesConditional.int_to_binary_vector(val, num_bits) for val in encoded])
 
-    def _getF_multiclass_conditional(self, s_col, o_col, a_col):
+    def _getF_multiclass_conditional(self, s_col_values, o_col_values, a_col_values):
         """
         Preprocess non-binary data into bitwise binary columns and compute F score per bit pair.
         """
@@ -148,26 +152,22 @@ class ProxyMutualInformationPrivbayesConditional:
                 binned = LabelEncoder().fit_transform(column)
             return self.encode_column_to_bits(binned)
 
-        col_1 = self.dataset[s_col]
-        col_2 = self.dataset[o_col]
-        col_3 = self.dataset[a_col]
+        s_col_bits = preprocess_column(np.array(s_col_values))
+        o_col_bits = preprocess_column(np.array(o_col_values))
+        a_col_bits = preprocess_column(np.array(a_col_values))
 
-        col_1_bits = preprocess_column(np.array(col_1))
-        col_2_bits = preprocess_column(np.array(col_2))
-        col_3_bits = preprocess_column(np.array(col_3))
-
-        n_bits_col1 = col_1_bits.shape[1]
-        n_bits_col2 = col_2_bits.shape[1]
-        n_bits_col3 = col_3_bits.shape[1]
+        n_bits_col_s = s_col_bits.shape[1]
+        n_bits_col_o = o_col_bits.shape[1]
+        n_bits_col_a = a_col_bits.shape[1]
 
         F_scores = []
 
-        for i in range(n_bits_col1):
-            bit1 = col_1_bits[:, i]
-            for j in range(n_bits_col2):
-                bit2 = col_2_bits[:, j]
-                for k in range(n_bits_col3):
-                    bit3 = col_3_bits[:, k]
+        for i in range(n_bits_col_s):
+            bit1 = s_col_bits[:, i]
+            for j in range(n_bits_col_o):
+                bit2 = o_col_bits[:, j]
+                for k in range(n_bits_col_a):
+                    bit3 = a_col_bits[:, k]
 
                     # Skip degenerate bit-columns
                     if len(np.unique(bit1)) < 2 or len(np.unique(bit2)) < 2:
