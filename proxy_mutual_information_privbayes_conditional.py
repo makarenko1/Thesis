@@ -59,68 +59,51 @@ class ProxyMutualInformationPrivbayesConditional:
         return False
 
     def _getF(self, s_col_values, o_col_values, a_col_values):
+        counts = np.zeros((2, 2, 2))
+        for s, o, a in zip(s_col_values, o_col_values, a_col_values):
+            counts[s, o, a] += 1
+
+        widths = list(counts.shape)
+        counts = counts.flatten()
+        total = counts.sum().item()
+        ceil = (total + 1) // 2
+        results = []
+
         d_s = len(np.unique(s_col_values))
         d_o = len(np.unique(o_col_values))
         d_a = len(np.unique(a_col_values))
 
-        widths = [d_s, d_o, d_a]
-        counts = np.zeros((d_s, d_o, d_a))
-        for s, o, a in zip(s_col_values, o_col_values, a_col_values):
-            counts[s, o, a] += 1
-
-        flat_counts = counts.flatten()
-        total_ans = 0.0
-        grand_total = 0
-        for a_val in range(d_a):
-            filtered_counts = np.zeros_like(flat_counts)
-            total_count = 0
+        for t in range(d_s):
             bounds = list(widths)
-            values = [0, 0, 0]
-            while True:
-                if values[2] == a_val:
-                    idx = self.encode(values, widths)
-                    filtered_counts[idx] = flat_counts[idx]
-                    total_count += int(flat_counts[idx])
-                if not self.inc(values, bounds):
-                    break
-            if total_count == 0:
-                continue
+            bounds[t] = 1
 
-            now = {0: 0}
-            ceil = (total_count + 1) // 2
-            values = [0, 0, 0]
-            bounds_conditional = list(widths)
-            bounds_conditional[1] = 1  # iterate only over S
-            while True:
-                if values[2] != a_val:
-                    if not self.inc(values, bounds_conditional):
-                        break
-                    continue
+            current_map = {0: 0}
+            values = [0] * num_dims
 
+            while True:
                 conditional = []
-                for o_val in range(d_o):
-                    values[1] = o_val
-                    conditional.append(filtered_counts[self.encode(values, widths)])
-                values[1] = 0
+                for s in range(widths[t]):
+                    values[t] = s
+                    conditional.append(counts[self._encode(values, widths)])
+                values[t] = 0
 
                 next_map = defaultdict(int)
-                for a, b in now.items():
+                for a, b in current_map.items():
                     a_new = min(a + int(conditional[0]), ceil)
                     b_new = min(b + int(conditional[1]), ceil)
-                    next_map[a_new] = max(next_map[a_new], b)
-                    next_map[a] = max(next_map[a], b_new)
-                now = next_map
+                    next_map[a_new] = max(next_map.get(a_new, 0), b)
+                    next_map[a] = max(next_map.get(a, 0), b_new)
+                current_map = next_map
 
-                if not self.inc(values, bounds_conditional):
+                if not self._inc(values, bounds):
                     break
 
-            best = -total_count
-            for a, b in now.items():
-                best = max(best, a + b - total_count)
-            total_ans += (best / total_count) * total_count
-            grand_total += total_count
+            best = -total
+            for a, b in current_map.items():
+                best = max(best, a + b - total)
+            results.append(best / total)
 
-        return total_ans / grand_total if grand_total > 0 else 0.0
+        return results[0]
 
     @staticmethod
     def int_to_binary_vector(val, num_bits):
@@ -177,3 +160,67 @@ class ProxyMutualInformationPrivbayesConditional:
                     F_scores.append(f_score)
 
         return np.mean(F_scores) if F_scores else 0.0  # you can also return max(F_scores), etc.
+
+    def _getF_alternative(self, s_col_values, o_col_values, a_col_values):
+        d_s = len(np.unique(s_col_values))
+        d_o = len(np.unique(o_col_values))
+        d_a = len(np.unique(a_col_values))
+
+        widths = [d_s, d_o, d_a]
+        counts = np.zeros((d_s, d_o, d_a))
+        for s, o, a in zip(s_col_values, o_col_values, a_col_values):
+            counts[s, o, a] += 1
+
+        flat_counts = counts.flatten()
+        total_ans = 0.0
+        grand_total = 0
+        for a_val in range(d_a):
+            filtered_counts = np.zeros_like(flat_counts)
+            total_count = 0
+            bounds = list(widths)
+            values = [0, 0, 0]
+            while True:
+                if values[2] == a_val:
+                    idx = self.encode(values, widths)
+                    filtered_counts[idx] = flat_counts[idx]
+                    total_count += int(flat_counts[idx])
+                if not self.inc(values, bounds):
+                    break
+            if total_count == 0:
+                continue
+
+            now = {0: 0}
+            ceil = (total_count + 1) // 2
+            values = [0, 0, 0]
+            bounds_conditional = list(widths)
+            bounds_conditional[1] = 1  # iterate only over S
+            while True:
+                if values[2] != a_val:
+                    if not self.inc(values, bounds_conditional):
+                        break
+                    continue
+
+                conditional = []
+                for o_val in range(d_o):
+                    values[1] = o_val
+                    conditional.append(filtered_counts[self.encode(values, widths)])
+                values[1] = 0
+
+                next_map = defaultdict(int)
+                for a, b in now.items():
+                    a_new = min(a + int(conditional[0]), ceil)
+                    b_new = min(b + int(conditional[1]), ceil)
+                    next_map[a_new] = max(next_map.get(a_new, 0), b)
+                    next_map[a] = max(next_map.get(a, 0), b_new)
+                now = next_map
+
+                if not self.inc(values, bounds_conditional):
+                    break
+
+            best = -total_count
+            for a, b in now.items():
+                best = max(best, a + b - total_count)
+            total_ans += (best / total_count) * total_count
+            grand_total += total_count
+
+        return total_ans / grand_total if grand_total > 0 else 0.0

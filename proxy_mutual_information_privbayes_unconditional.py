@@ -60,8 +60,8 @@ class ProxyMutualInformationPrivbayesUnconditional:
         """
 
         counts = np.zeros((2, 2))
-        for xi, yi in zip(s_col_values, o_col_values):
-            counts[xi, yi] += 1
+        for s, o in zip(s_col_values, o_col_values):
+            counts[s, o] += 1
 
         widths = list(counts.shape)
         counts = counts.flatten()
@@ -72,15 +72,15 @@ class ProxyMutualInformationPrivbayesUnconditional:
 
         for t in range(num_dims):
             bounds = list(widths)
-            bounds[t] = 1  # always 0
+            bounds[t] = 1
 
             current_map = {0: 0}
             values = [0] * num_dims
 
             while True:
                 conditional = []
-                for s_col_values in range(widths[t]):
-                    values[t] = s_col_values
+                for s in range(widths[t]):
+                    values[t] = s
                     conditional.append(counts[self._encode(values, widths)])
                 values[t] = 0
 
