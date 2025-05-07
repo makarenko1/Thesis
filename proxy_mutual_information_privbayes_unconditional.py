@@ -23,7 +23,7 @@ class ProxyMutualInformationPrivbayesUnconditional:
         unique_2 = self.dataset[o_col].nunique()
 
         if unique_1 == 2 and unique_2 == 2:
-            mi = self._getF(self.dataset[s_col].to_numpy(), self.dataset[o_col].to_numpy())
+            mi = self.getF(self.dataset[s_col].to_numpy(), self.dataset[o_col].to_numpy())
         else:
             mi = self._getF_multiclass_unconditional(s_col, o_col)
         mi += 0.5  # mapping
@@ -34,7 +34,7 @@ class ProxyMutualInformationPrivbayesUnconditional:
         return round(mi, 4)
 
     @staticmethod
-    def _encode(values, widths):
+    def encode(values, widths):
         """Converts multidimensional index to 1D index"""
         index = 0
         base = 1
@@ -44,7 +44,7 @@ class ProxyMutualInformationPrivbayesUnconditional:
         return index
 
     @staticmethod
-    def _inc(values, bounds):
+    def inc(values, bounds):
         """Increments a vector of indices with given bounds (like ++ on a multidimensional loop)"""
         for i in reversed(range(len(values))):
             if values[i] + 1 < bounds[i]:
@@ -54,7 +54,7 @@ class ProxyMutualInformationPrivbayesUnconditional:
                 return True
         return False
 
-    def _getF(self, s_col_values, o_col_values):
+    def getF(self, s_col_values, o_col_values):
         """
         Compute F from two binary columns using the DP dynamic programming approach.
         """
@@ -81,7 +81,7 @@ class ProxyMutualInformationPrivbayesUnconditional:
                 conditional = []
                 for s in range(widths[t]):
                     values[t] = s
-                    conditional.append(counts[self._encode(values, widths)])
+                    conditional.append(counts[self.encode(values, widths)])
                 values[t] = 0
 
                 next_map = defaultdict(int)
@@ -92,7 +92,7 @@ class ProxyMutualInformationPrivbayesUnconditional:
                     next_map[a] = max(next_map.get(a, 0), b_new)
                 current_map = next_map
 
-                if not self._inc(values, bounds):
+                if not self.inc(values, bounds):
                     break
 
             best = -total
@@ -152,7 +152,7 @@ class ProxyMutualInformationPrivbayesUnconditional:
                 if len(np.unique(bit1)) < 2 or len(np.unique(bit2)) < 2:
                     continue
 
-                f_score = self._getF(bit1, bit2)
+                f_score = self.getF(bit1, bit2)
                 F_scores.append(f_score)
 
         return np.mean(F_scores) if F_scores else 0.0
@@ -176,7 +176,7 @@ class ProxyMutualInformationPrivbayesUnconditional:
                 binary_2 = (o_col_values == class_2).astype(int)  # one-vs-all
                 if len(np.unique(binary_1)) < 2 or len(np.unique(binary_2)) < 2:
                     continue
-                f = self._getF(binary_1, binary_2)
+                f = self.getF(binary_1, binary_2)
                 F_scores.append(f)
 
         return np.mean(F_scores) if F_scores else 0.0

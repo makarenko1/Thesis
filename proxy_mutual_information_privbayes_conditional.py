@@ -25,9 +25,8 @@ class ProxyMutualInformationPrivbayesConditional:
         unique_3 = self.dataset[a_col].nunique()
 
         if unique_1 == 2 and unique_2 == 2 and unique_3 == 2:
-            mi = self._getF(self.dataset[s_col].to_numpy(),
-                            self.dataset[o_col].to_numpy(),
-                            self.dataset[a_col].to_numpy())
+            mi = self.getF(self.dataset[s_col].to_numpy(), self.dataset[o_col].to_numpy(),
+                           self.dataset[a_col].to_numpy())
         else:
             mi = self._getF_multiclass_conditional(self.dataset[s_col].to_numpy(),
                                                    self.dataset[o_col].to_numpy(),
@@ -58,52 +57,62 @@ class ProxyMutualInformationPrivbayesConditional:
                 return True
         return False
 
-    def _getF(self, s_col_values, o_col_values, a_col_values):
-        counts = np.zeros((2, 2, 2))
-        for s, o, a in zip(s_col_values, o_col_values, a_col_values):
-            counts[s, o, a] += 1
-
-        widths = list(counts.shape)
-        counts = counts.flatten()
-        total = counts.sum().item()
-        ceil = (total + 1) // 2
-        results = []
-
+    def getF(self, s_col_values, o_col_values, a_col_values):
         d_s = len(np.unique(s_col_values))
         d_o = len(np.unique(o_col_values))
         d_a = len(np.unique(a_col_values))
 
-        for t in range(d_s):
-            bounds = list(widths)
-            bounds[t] = 1
+        counts = np.zeros((d_s, d_o, d_a))
+        for s, o, a in zip(s_col_values, o_col_values, a_col_values):
+            counts[s, o, a] += 1
 
-            current_map = {0: 0}
-            values = [0] * num_dims
+        total_ans = 0
+        grand_total = 0
 
-            while True:
-                conditional = []
-                for s in range(widths[t]):
-                    values[t] = s
-                    conditional.append(counts[self._encode(values, widths)])
-                values[t] = 0
+        for a_val in range(d_a):
+            sub_counts = counts[:, :, a_val]
+            widths = list(sub_counts.shape)
+            flat_counts = sub_counts.flatten()
+            total = flat_counts.sum().item()
+            if total == 0:
+                continue
+            ceil = (total + 1) // 2
+            num_dims = len(widths)
 
-                next_map = defaultdict(int)
+            for t in range(num_dims):
+                bounds = list(widths)
+                bounds[t] = 1
+
+                current_map = {0: 0}
+                values = [0] * num_dims
+
+                while True:
+                    conditional = []
+                    for s in range(widths[t]):
+                        values[t] = s
+                        idx = self.encode(values, widths)
+                        conditional.append(flat_counts[idx])
+                    values[t] = 0
+
+                    next_map = defaultdict(int)
+                    for a, b in current_map.items():
+                        a_new = min(a + int(conditional[0]), ceil)
+                        b_new = min(b + int(conditional[1]), ceil)
+                        next_map[a_new] = max(next_map[a_new], b)
+                        next_map[a] = max(next_map[a], b_new)
+                    current_map = next_map
+
+                    if not self.inc(values, bounds):
+                        break
+
+                best = -total
                 for a, b in current_map.items():
-                    a_new = min(a + int(conditional[0]), ceil)
-                    b_new = min(b + int(conditional[1]), ceil)
-                    next_map[a_new] = max(next_map.get(a_new, 0), b)
-                    next_map[a] = max(next_map.get(a, 0), b_new)
-                current_map = next_map
+                    best = max(best, a + b - total)
 
-                if not self._inc(values, bounds):
-                    break
+                total_ans += (best / total) * total
+                grand_total += total
 
-            best = -total
-            for a, b in current_map.items():
-                best = max(best, a + b - total)
-            results.append(best / total)
-
-        return results[0]
+        return total_ans / grand_total if grand_total > 0 else 0.0
 
     @staticmethod
     def int_to_binary_vector(val, num_bits):
@@ -156,7 +165,7 @@ class ProxyMutualInformationPrivbayesConditional:
                     if len(np.unique(bit1)) < 2 or len(np.unique(bit2)) < 2:
                         continue
 
-                    f_score = self._getF(bit1, bit2, bit3)
+                    f_score = self.getF(bit1, bit2, bit3)
                     F_scores.append(f_score)
 
         return np.mean(F_scores) if F_scores else 0.0  # you can also return max(F_scores), etc.
