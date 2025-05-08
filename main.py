@@ -6,6 +6,7 @@ from proxy_mutual_information_privbayes_conditional import ProxyMutualInformatio
 from proxy_mutual_information_privbayes_unconditional import ProxyMutualInformationPrivbayesUnconditional
 from proxy_mutual_information_nist_contest_unconditional import ProxyMutualInformationNistContestUnconditional
 from mutual_information import MutualInformation
+from proxy_repair_maxsat import ProxyRepairMaxSat
 
 if __name__ == "__main__":
     mi_results = []
@@ -33,7 +34,7 @@ if __name__ == "__main__":
     # privbayes_results.append(
     #     ProxyMutualInformationPrivbayesUnconditional('data/adult.csv').calculate("education", "education-num"))
     # mst_results.append(ProxyMutualInformationNistContestUnconditional('data/adult.csv').calculate(
-    #     "education", "education-num", 'data/adult-domain-race-income.json'))
+    #     "education", "education-num", 'data/adult-domain-education-education-num.json'))
     #
     # print()
     #
@@ -133,9 +134,70 @@ if __name__ == "__main__":
     # plt.savefig("mutual_information_colored_by_dataset.png")
     # plt.show()
 
-    print("Adult dataset results:")
-    mi_results.append(MutualInformation('data/adult.csv').calculate("sex", "income>50K"))
-    privbayes_results.append(
+    conditional_mi_results = []
+    conditional_privbayes_results = []
+    conditional_mst_results = []
+    maxsat_results = []
+
+    print("Adult dataset results (conditioning on 'education'):")
+    conditional_mi_results.append(MutualInformation('data/adult.csv').calculate("sex", "income>50K", "education"))
+    conditional_privbayes_results.append(
         ProxyMutualInformationPrivbayesConditional('data/adult.csv').calculate("sex", "income>50K", "education"))
-    mst_results.append(ProxyMutualInformationNistContestConditional('data/adult.csv').calculate(
+    conditional_mst_results.append(ProxyMutualInformationNistContestConditional('data/adult.csv').calculate(
         "sex", "income>50K", "education", 'data/adult-domain-sex-income-education.json'))
+    maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("sex", "income>50K", "education"))
+
+    print()
+
+    conditional_mi_results.append(MutualInformation('data/adult.csv').calculate("race", "income>50K", "education"))
+    conditional_privbayes_results.append(
+        ProxyMutualInformationPrivbayesConditional('data/adult.csv').calculate("race", "income>50K", "education"))
+    conditional_mst_results.append(ProxyMutualInformationNistContestConditional('data/adult.csv').calculate(
+        "race", "income>50K", "education", 'data/adult-domain-race-income-education.json'))
+    maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("race", "income>50K", "education"))
+
+    # Labels (x-axis)
+    labels = [
+        "sex/income | education", "race/income | education"
+    ]
+
+    # Define colors by dataset
+    mi_colors = ['#b3cde3'] * 2
+    priv_colors = ['#ccebc5'] * 2
+    mst_colors = ['#fbb4ae'] * 2
+    maxsat_colors = ['#e5d0ff'] * 2
+
+    x = np.arange(len(labels))
+
+    fig, axes = plt.subplots(4, 1, figsize=(14, 12), sharex=True)
+
+    # Plot MI
+    axes[0].bar(x, conditional_mi_results, color=mi_colors)
+    axes[0].set_title("Conditional Mutual Information")
+    axes[0].set_ylabel("Score")
+    axes[0].grid(False)
+
+    # Plot PrivBayes
+    axes[1].bar(x, conditional_privbayes_results, color=priv_colors)
+    axes[1].set_title("PrivBayes Proxy")
+    axes[1].set_ylabel("Score")
+    axes[1].grid(False)
+
+    # Plot MST Proxy
+    axes[2].bar(x, conditional_mst_results, color=mst_colors)
+    axes[2].set_title("MST Proxy")
+    axes[2].set_ylabel("Score")
+    axes[2].grid(False)
+
+    # Plot MaxSAT Proxy
+    axes[3].bar(x, maxsat_results, color=maxsat_colors)
+    axes[3].set_title("MaxSAT Proxy")
+    axes[3].set_ylabel("Score")
+    axes[3].grid(False)
+
+    # Shared x-axis
+    plt.xticks(ticks=x, labels=labels, rotation=45, ha="right")
+    plt.tight_layout()
+    plt.savefig("conditional_mutual_information_colored_by_dataset.png")
+    plt.show()
+

@@ -10,46 +10,74 @@ class MutualInformation:
     def __init__(self, datapath):
         self.dataset = pd.read_csv(datapath)
 
-    def calculate(self, column_name_1, column_name_2):
+    def calculate(self, s_col, o_col, a_col=None):
         self.dataset.replace(["NA", "N/A", ""], pd.NA, inplace=True)
-        self.dataset.dropna(inplace=True, subset=[column_name_1, column_name_2])
-        self.dataset[column_name_1] = LabelEncoder().fit_transform(self.dataset[column_name_1])
-        self.dataset[column_name_2] = LabelEncoder().fit_transform(self.dataset[column_name_2])
+        self.dataset.dropna(inplace=True, subset=[s_col, o_col])
+        self.dataset[s_col] = LabelEncoder().fit_transform(self.dataset[s_col])
+        self.dataset[o_col] = LabelEncoder().fit_transform(self.dataset[o_col])
+        if a_col is not None:
+            self.dataset[a_col] = LabelEncoder().fit_transform(self.dataset[a_col])
 
         # Compute mutual information
         start_time = time.time()  # Record start time
 
-        mi = self._getI(column_name_1, column_name_2)
+        mi = self._getI(self.dataset[s_col].to_numpy(),
+                        self.dataset[o_col].to_numpy(),
+                        self.dataset[a_col].to_numpy() if a_col else None)
 
         end_time = time.time()  # Record end time
         elapsed_time = end_time - start_time
-        print(f"Regular Mutual Information between '{column_name_1}' and '{column_name_2}': "
+        print(f"Regular Mutual Information between '{s_col}' and '{o_col}': "
               f"{mi:.4f}. Calculation took {elapsed_time:.3f} seconds.")
         return round(mi, 4)
 
-    def _getI(self, column_name_1, column_name_2):
+    def _getI(self, s_col_values, o_col_values, a_col_values=None):
 
-        col1 = self.dataset[column_name_1]
-        col2 = self.dataset[column_name_2]
+        if a_col_values is None:
+            size_X = s_col_values.max() + 1
+            size_Y = o_col_values.max() + 1
+            counts = np.zeros((size_X, size_Y))
+            for s_vals, o_vals in zip(s_col_values, o_col_values):
+                counts[s_vals, o_vals] += 1
 
-        size_X = col1.max() + 1
-        size_Y = col2.max() + 1
+            total = counts.sum()
+            if total == 0:
+                return 0.0
 
-        counts = np.zeros((size_X, size_Y))
-        for x, y in zip(col1, col2):
-            counts[x, y] += 1
+            P_xy = counts / total
+            P_x = P_xy.sum(axis=1, keepdims=True)
+            P_y = P_xy.sum(axis=0, keepdims=True)
 
-        total = counts.sum()
-        if total == 0:
-            return 0.0
+            mask = P_xy > 0
+            ratio = np.divide(P_xy, P_x @ P_y, out=np.ones_like(P_xy), where=mask)
+            return np.sum(P_xy[mask] * np.log2(ratio[mask]))
 
-        P_xy = counts / total
-        P_x = P_xy.sum(axis=1, keepdims=True)
-        P_y = P_xy.sum(axis=0, keepdims=True)
+        else:
+            total_count = len(self.dataset)
+            result = 0.0
 
-        mask = P_xy > 0
-        ratio = np.divide(P_xy, P_x @ P_y, out=np.ones_like(P_xy), where=mask)
-        MI = np.sum(P_xy[mask] * np.log2(ratio[mask]))
+            for a_val in np.unique(a_col_values):
+                mask_z = a_col_values == a_val
+                s_vals = s_col_values[mask_z]
+                o_vals = o_col_values[mask_z]
+                n = len(s_vals)
+                if n == 0:
+                    continue
 
-        return MI
+                size_X = s_vals.max() + 1
+                size_Y = o_vals.max() + 1
+                counts = np.zeros((size_X, size_Y))
+                for xi, yi in zip(s_vals, o_vals):
+                    counts[xi, yi] += 1
 
+                P_xy = counts / n
+                P_x = P_xy.sum(axis=1, keepdims=True)
+                P_y = P_xy.sum(axis=0, keepdims=True)
+
+                mask = P_xy > 0
+                ratio = np.divide(P_xy, P_x @ P_y, out=np.ones_like(P_xy), where=mask)
+                mi_z = np.sum(P_xy[mask] * np.log2(ratio[mask]))
+
+                result += (n / total_count) * mi_z
+
+            return result
