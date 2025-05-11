@@ -6,11 +6,40 @@ from sklearn.preprocessing import LabelEncoder
 
 
 class MutualInformation:
+    """
+    A class to compute Mutual Information (MI) or Conditional Mutual Information (CMI)
+    between two categorical attributes in a dataset, with optional conditioning on a third attribute.
+    """
 
     def __init__(self, datapath):
+        """
+        Initialize the MutualInformation object with a dataset.
+
+        Parameters:
+        -----------
+        datapath : str
+            Path to the CSV file containing the dataset.
+        """
         self.dataset = pd.read_csv(datapath)
 
     def calculate(self, s_col, o_col, a_col=None):
+        """
+        Compute the Mutual Information (MI) between two columns, optionally conditioned on a third column.
+
+        Parameters:
+        -----------
+        s_col : str
+            Name of the first categorical column (S).
+        o_col : str
+            Name of the second categorical column (O).
+        a_col : str, optional
+            Name of the third categorical column (A) to condition on. Default is None.
+
+        Returns:
+        --------
+        float
+            The mutual information or conditional mutual information score rounded to 4 decimal places.
+        """
         self.dataset.replace(["NA", "N/A", ""], pd.NA, inplace=True)
         self.dataset.dropna(inplace=True, subset=[s_col, o_col])
         self.dataset[s_col] = LabelEncoder().fit_transform(self.dataset[s_col])
@@ -32,7 +61,23 @@ class MutualInformation:
         return round(mi, 4)
 
     def _getI(self, s_col_values, o_col_values, a_col_values=None):
+        """
+        Internal method to compute MI or CMI from label-encoded NumPy arrays.
 
+        Parameters:
+        -----------
+        s_col_values : np.ndarray
+            Encoded values of the S attribute.
+        o_col_values : np.ndarray
+            Encoded values of the O attribute.
+        a_col_values : np.ndarray or None
+            Encoded values of the A attribute, if conditioning is required.
+
+        Returns:
+        --------
+        float
+            The computed MI or CMI score in bits (base-2).
+        """
         if a_col_values is None:
             size_X = s_col_values.max() + 1
             size_Y = o_col_values.max() + 1

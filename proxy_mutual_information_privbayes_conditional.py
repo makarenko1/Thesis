@@ -7,11 +7,41 @@ from sklearn.preprocessing import LabelEncoder
 
 
 class ProxyMutualInformationPrivbayesConditional:
+    """
+    Approximates conditional mutual information using a dynamic programming technique
+    inspired by the PrivBayes competition-winning approach. Supports both binary and
+    non-binary categorical attributes through bitwise encoding.
+    """
 
     def __init__(self, datapath):
+        """
+        Load dataset from CSV path.
+
+        Parameters:
+        -----------
+        datapath : str
+            Path to the dataset CSV file.
+        """
         self.dataset = pd.read_csv(datapath)
 
     def calculate(self, s_col, o_col, a_col):
+        """
+        Compute the PrivBayes proxy mutual information score between s_col and o_col given a_col.
+
+        Parameters:
+        -----------
+        s_col : str
+            Name of first attribute (S).
+        o_col : str
+            Name of second attribute (O).
+        a_col : str
+            Name of conditional attribute (A).
+
+        Returns:
+        --------
+        float
+            Proxy score approximating conditional mutual information.
+        """
         self.dataset.replace(["NA", "N/A", ""], pd.NA, inplace=True)
         self.dataset.dropna(inplace=True, subset=[s_col, o_col])
         self.dataset[s_col] = LabelEncoder().fit_transform(self.dataset[s_col])
@@ -25,13 +55,17 @@ class ProxyMutualInformationPrivbayesConditional:
         unique_3 = self.dataset[a_col].nunique()
 
         if unique_1 == 2 and unique_2 == 2 and unique_3 == 2:
-            mi = self.getF(self.dataset[s_col].to_numpy(), self.dataset[o_col].to_numpy(),
-                           self.dataset[a_col].to_numpy())
+            mi = self.getF(
+                self.dataset[s_col].to_numpy(),
+                self.dataset[o_col].to_numpy(),
+                self.dataset[a_col].to_numpy())
         else:
-            mi = self._getF_multiclass_conditional(self.dataset[s_col].to_numpy(),
-                                                   self.dataset[o_col].to_numpy(),
-                                                   self.dataset[a_col].to_numpy())
-        mi += 0.5  # mapping
+            mi = self._getF_multiclass_conditional(
+                self.dataset[s_col].to_numpy(),
+                self.dataset[o_col].to_numpy(),
+                self.dataset[a_col].to_numpy())
+
+        mi += 0.5  # shift to positive range
 
         elapsed_time = time.time() - start_time
         print(f"Privbayes: Proxy Mutual Information between '{s_col}' and '{o_col}': {mi:.4f}. "
@@ -40,6 +74,18 @@ class ProxyMutualInformationPrivbayesConditional:
 
     @staticmethod
     def encode(values, widths):
+        """
+        Encode multidimensional index into flat index.
+
+        Parameters:
+        -----------
+        values : list[int]
+        widths : list[int]
+
+        Returns:
+        --------
+        int : flat index
+        """
         index = 0
         base = 1
         for v, w in zip(reversed(values), reversed(widths)):
@@ -49,6 +95,18 @@ class ProxyMutualInformationPrivbayesConditional:
 
     @staticmethod
     def inc(values, bounds):
+        """
+        Increment multidimensional index vector in lexicographic order.
+
+        Parameters:
+        -----------
+        values : list[int]
+        bounds : list[int]
+
+        Returns:
+        --------
+        bool : True if increment succeeded, False if overflowed.
+        """
         for i in reversed(range(len(values))):
             if values[i] + 1 < bounds[i]:
                 values[i] += 1
@@ -58,6 +116,18 @@ class ProxyMutualInformationPrivbayesConditional:
         return False
 
     def getF(self, s_col_values, o_col_values, a_col_values):
+        """
+        Compute F-score from binary columns using dynamic programming.
+
+        Parameters:
+        -----------
+        s_col_values, o_col_values, a_col_values : np.ndarray[int]
+            Encoded column values for S, O, A
+
+        Returns:
+        --------
+        float : F-score
+        """
         d_s = len(np.unique(s_col_values))
         d_o = len(np.unique(o_col_values))
         d_a = len(np.unique(a_col_values))
@@ -116,29 +186,56 @@ class ProxyMutualInformationPrivbayesConditional:
 
     @staticmethod
     def int_to_binary_vector(val, num_bits):
+        """
+        Convert an integer to a fixed-length binary list.
+
+        Parameters:
+        -----------
+        val : int
+        num_bits : int
+
+        Returns:
+        --------
+        list[int] : binary representation
+        """
         return [int(x) for x in format(val, f'0{num_bits}b')]
 
     @staticmethod
     def encode_column_to_bits(column):
         """
-        Convert a categorical column to ⌈log2(n)⌉ binary features.
-        Returns a 2D NumPy array of shape (n_samples, n_bits)
+        Encode a column as binary bit vectors.
+
+        Parameters:
+        -----------
+        column : np.ndarray[int]
+
+        Returns:
+        --------
+        np.ndarray[int] : shape (n, log2(n_classes))
         """
         le = LabelEncoder()
         encoded = le.fit_transform(column)
         max_val = np.max(encoded)
         num_bits = int(np.ceil(np.log2(max_val + 1)))
-        return np.array([ProxyMutualInformationPrivbayesConditional.int_to_binary_vector(val, num_bits) for val in encoded])
+        return np.array([
+            ProxyMutualInformationPrivbayesConditional.int_to_binary_vector(val, num_bits)
+            for val in encoded
+        ])
 
     def _getF_multiclass_conditional(self, s_col_values, o_col_values, a_col_values):
         """
-        Preprocess non-binary data into bitwise binary columns and compute F score per bit pair.
-        """
+        Convert categorical features to binary and compute average F score over all bit pairs.
 
+        Parameters:
+        -----------
+        s_col_values, o_col_values, a_col_values : np.ndarray
+
+        Returns:
+        --------
+        float : average F score over bit-combinations
+        """
         def preprocess_column(column, num_bins=16):
-            """Binning if needed, then binary encode"""
-            if column.dtype.kind in 'f':  # float = continuous
-                # Equal-width binning
+            if column.dtype.kind in 'f':
                 binned = np.digitize(column, np.histogram_bin_edges(column, bins=num_bins)) - 1
             else:
                 binned = LabelEncoder().fit_transform(column)
@@ -161,16 +258,26 @@ class ProxyMutualInformationPrivbayesConditional:
                 for k in range(n_bits_col_a):
                     bit3 = a_col_bits[:, k]
 
-                    # Skip degenerate bit-columns
                     if len(np.unique(bit1)) < 2 or len(np.unique(bit2)) < 2:
                         continue
 
                     f_score = self.getF(bit1, bit2, bit3)
                     F_scores.append(f_score)
 
-        return np.mean(F_scores) if F_scores else 0.0  # you can also return max(F_scores), etc.
+        return np.mean(F_scores) if F_scores else 0.0
 
     def _getF_alternative(self, s_col_values, o_col_values, a_col_values):
+        """
+        Legacy version of getF using flattened counts and hardcoded loop logic.
+
+        Parameters:
+        -----------
+        s_col_values, o_col_values, a_col_values : np.ndarray
+
+        Returns:
+        --------
+        float : computed F-score
+        """
         d_s = len(np.unique(s_col_values))
         d_o = len(np.unique(o_col_values))
         d_a = len(np.unique(a_col_values))
@@ -183,6 +290,7 @@ class ProxyMutualInformationPrivbayesConditional:
         flat_counts = counts.flatten()
         total_ans = 0.0
         grand_total = 0
+
         for a_val in range(d_a):
             filtered_counts = np.zeros_like(flat_counts)
             total_count = 0
