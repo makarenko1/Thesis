@@ -128,7 +128,7 @@ if __name__ == "__main__":
 
     calculate_mi_proxies("data/compas-scores.csv", compas_attributes, compas_domains, "Compas")
     plot_mi_proxies(mi_results, privbayes_results, mst_results, tvd_results, labels,
-                    "mutual_information_colored_by_dataset.png")
+                    "plots/plot_mutual_information_colored_by_dataset.png")
 
     # ----------------Conditional MI Proxies----------------
     mi_results = []
@@ -189,7 +189,7 @@ if __name__ == "__main__":
 
     calculate_mi_proxies("data/compas-scores.csv", compas_attributes, compas_domains, "Compas")
     plot_mi_proxies(mi_results, privbayes_results, mst_results, tvd_results, labels,
-                    "conditional_mutual_information_colored_by_dataset.png")
+                    "plots/plot_conditional_mutual_information_colored_by_dataset.png")
 
     # ----------------MaxSAT Repair----------------
     maxsat_results = []

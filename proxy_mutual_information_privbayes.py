@@ -194,10 +194,12 @@ class ProxyMutualInformationPrivbayes:
             values = [0] * 2
 
             while True:
-                conditional = [
-                    flat_counts[self.encode([s if t == 0 else 0, s if t == 1 else 0], widths)]
-                    for s in range(2)
-                ]
+                conditional = []
+                for s_val in range(2):
+                    values[t] = s_val
+                    idx = self.encode(values, widths)
+                    conditional.append(flat_counts[idx])
+                values[t] = 0
                 next_map = defaultdict(int)
                 for a, b in current_map.items():
                     a_new = min(a + int(conditional[0]), ceil)
