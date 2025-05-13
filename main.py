@@ -150,9 +150,9 @@ if __name__ == "__main__":
     ]
 
     adult_domains = [
-        "data/adult-domain-sex-income-education.json",
-        "data/adult-domain-race-income-education.json",
-        "data/adult-domain-education-education-num-sex.json"
+        "data/domains/adult/adult-domain-sex-income-education.json",
+        "data/domains/adult/adult-domain-race-income-education.json",
+        "data/domains/adult/adult-domain-education-education-num-sex.json"
     ]
 
     calculate_mi_proxies("data/adult.csv", adult_attributes, adult_domains, "Adult")
@@ -166,10 +166,10 @@ if __name__ == "__main__":
     ]
 
     stackoverflow_domains = [
-        "data/stackoverflow-domain-country-edlevel-age.json",
-        "data/stackoverflow-domain-country-devtype-age.json",
-        "data/stackoverflow-domain-country-surveylength-age.json",
-        "data/stackoverflow-domain-country-sovisitfreq-age.json"
+        "data/domains/stackoverflow/stackoverflow-domain-country-edlevel-age.json",
+        "data/domains/stackoverflow/stackoverflow-domain-country-devtype-age.json",
+        "data/domains/stackoverflow/stackoverflow-domain-country-surveylength-age.json",
+        "data/domains/stackoverflow/stackoverflow-domain-country-sovisitfreq-age.json"
     ]
 
     calculate_mi_proxies("data/stackoverflow.csv", stackoverflow_attributes, stackoverflow_domains, "Stackoverflow")
@@ -182,9 +182,9 @@ if __name__ == "__main__":
     ]
 
     compas_domains = [
-        "data/compas-domain-race-c_charge_desc-age.json",
-        "data/compas-domain-race-score_text-age.json",
-        "data/compas-domain-race-sex-age.json"
+        "data/domains/compas/compas-domain-race-c_charge_desc-age.json",
+        "data/domains/compas/compas-domain-race-score_text-age.json",
+        "data/domains/compas/compas-domain-race-sex-age.json"
     ]
 
     calculate_mi_proxies("data/compas-scores.csv", compas_attributes, compas_domains, "Compas")
