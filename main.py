@@ -69,6 +69,7 @@ def plot_mi_proxies(mi_results, privbayes_results, mst_results, tvd_results, lab
 
 
 if __name__ == "__main__":
+    # ----------------Unconditional MI Proxies----------------
     mi_results = []
     privbayes_results = []
     mst_results = []
@@ -129,9 +130,17 @@ if __name__ == "__main__":
     plot_mi_proxies(mi_results, privbayes_results, mst_results, tvd_results, labels,
                     "mutual_information_colored_by_dataset.png")
 
+    # ----------------Conditional MI Proxies----------------
     mi_results = []
     privbayes_results = []
     mst_results = []
+    tvd_results = []
+
+    labels = [
+        "sex/income | education", "race/income | education", "education/education-num | sex",
+        "Country/EdLevel | Age", "Country/DevType | Age", "Country/SurveyLength | Age", "Country/SOVisitFreq | Age",
+        "race/charge_desc | age", "race/score_text | age", "race/sex | age"
+    ]
 
     # Adult dataset
     adult_attributes = [
@@ -147,8 +156,42 @@ if __name__ == "__main__":
     ]
 
     calculate_mi_proxies("data/adult.csv", adult_attributes, adult_domains, "Adult")
-    plot_mi_proxies(mi_results, privbayes_results, mst_results, "conditional_mutual_information_colored_by_dataset.png")
 
+    # Stackoverflow dataset
+    stackoverflow_attributes = [
+        ("Country", "EdLevel", "Age"),
+        ("Country", "DevType", "Age"),
+        ("Country", "SurveyLength", "Age"),
+        ("Country", "SOVisitFreq", "Age")
+    ]
+
+    stackoverflow_domains = [
+        "data/stackoverflow-domain-country-edlevel-age.json",
+        "data/stackoverflow-domain-country-devtype-age.json",
+        "data/stackoverflow-domain-country-surveylength-age.json",
+        "data/stackoverflow-domain-country-sovisitfreq-age.json"
+    ]
+
+    calculate_mi_proxies("data/stackoverflow.csv", stackoverflow_attributes, stackoverflow_domains, "Stackoverflow")
+
+    # Compas dataset
+    compas_attributes = [
+        ("race", "c_charge_desc", "age"),
+        ("race", "score_text", "age"),
+        ("race", "sex", "age")
+    ]
+
+    compas_domains = [
+        "data/compas-domain-race-c_charge_desc-age.json",
+        "data/compas-domain-race-score_text-age.json",
+        "data/compas-domain-race-sex-age.json"
+    ]
+
+    calculate_mi_proxies("data/compas-scores.csv", compas_attributes, compas_domains, "Compas")
+    plot_mi_proxies(mi_results, privbayes_results, mst_results, tvd_results, labels,
+                    "conditional_mutual_information_colored_by_dataset.png")
+
+    # ----------------MaxSAT Repair----------------
     maxsat_results = []
     maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("sex", "income>50K", "education"))
     maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("race", "income>50K", "education"))
