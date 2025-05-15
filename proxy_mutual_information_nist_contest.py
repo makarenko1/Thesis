@@ -45,12 +45,11 @@ class ProxyMutualInformationNistContest:
 
         if a_col is None:
             mi = run_mst_unconditional(self.datapath, domain, s_col, o_col)
-            print(f"NIST MST: Proxy Mutual Information between '{s_col}' and '{o_col}': {mi:.4f}.", end=" ")
         else:
             mi = run_mst_conditional(self.datapath, domain, s_col, o_col, a_col)
-            print(f"NIST MST: Proxy Conditional Mutual Information between '{s_col}' and '{o_col}' conditioned on "
-                  f"'{a_col}': {mi:.4f}.", end=" ")
 
         elapsed_time = time.time() - start_time
-        print(f"Calculation took {elapsed_time:.3f} seconds.")
+        print(f"NIST MST: Proxy Conditional Mutual Information between '{s_col}' and '{o_col}'" +
+              (f" conditioned on '{a_col}'" if a_col else "") + f": {mi:.4f}. Calculation took "
+                                                                f"{elapsed_time:.3f} seconds.")
         return round(mi, 4)
