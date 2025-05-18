@@ -133,10 +133,10 @@ class ProxyRepairMaxSat:
 
         # Step 3: Enforce MVD 3CNF constraints
         C = set()
-        for a, tuples in group_by_a.items():
-            for (s1, o1), (s2, o2) in product(tuples, repeat=2):
-                if s1 != s2 and o1 != o2:
-                    C.add((s1, o1, s2, o2, a))
+        for (s1, o1, a1) in D_star:
+            for (s2, o2, a2) in D_star:
+                if a1 == a2 and s1 != s2 and o1 != o2:
+                    C.add((s1, o1, s2, o2, a1))
 
         used_keys = set()
         for (s1, o1, s2, o2, a) in C:
