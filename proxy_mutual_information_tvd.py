@@ -63,7 +63,8 @@ class ProxyMutualInformationTVD:
         )
         return round(tvd, 4)
 
-    def _calculate_tvd_unconditional(self, s, o):
+    @staticmethod
+    def _calculate_tvd_unconditional(s_col_values, o_col_values):
         """
         Computes unconditional TVD between P(S,O) and P(S)P(O)
 
@@ -76,40 +77,42 @@ class ProxyMutualInformationTVD:
         --------
         float : TVD score
         """
-        num_s = np.max(s) + 1
-        num_o = np.max(o) + 1
+        num_s = np.max(s_col_values) + 1
+        num_o = np.max(o_col_values) + 1
         joint = np.zeros((num_s, num_o))
-        for si, oi in zip(s, o):
-            joint[si, oi] += 1
+        for s, o in zip(s_col_values, o_col_values):
+            joint[s, o] += 1
 
-        joint /= len(s)
+        joint /= len(s_col_values)
         p_s = joint.sum(axis=1, keepdims=True)
         p_o = joint.sum(axis=0, keepdims=True)
         expected = p_s @ p_o
 
-        return 0.5 * np.sum(np.abs(joint - expected))
+        tvd = 0.5 * np.sum(np.abs(joint - expected))
 
-    def _calculate_tvd_conditional(self, s, o, a):
+        return 2 * tvd**2
+
+    def _calculate_tvd_conditional(self, s_col_values, o_col_values, a_col_values):
         """
         Computes conditional TVD as the expected TVD over each group of A=a.
 
         Parameters:
         -----------
-        s : np.ndarray[int]
-        o : np.ndarray[int]
-        a : np.ndarray[int]
+        s_col_values : np.ndarray[int]
+        o_col_values : np.ndarray[int]
+        a_col_values : np.ndarray[int]
 
         Returns:
         --------
         float : Expected conditional TVD score
         """
-        total = len(a)
+        total = len(a_col_values)
         tvd_total = 0.0
 
-        for a_val in np.unique(a):
-            mask = a == a_val
-            s_sub = s[mask]
-            o_sub = o[mask]
+        for a_val in np.unique(a_col_values):
+            mask = a_col_values == a_val
+            s_sub = s_col_values[mask]
+            o_sub = o_col_values[mask]
             if len(s_sub) == 0:
                 continue
             weight = len(s_sub) / total
