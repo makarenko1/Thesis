@@ -88,7 +88,7 @@ class ProxyMutualInformationTVD:
         p_o = joint.sum(axis=0, keepdims=True)
         expected = p_s @ p_o
 
-        tvd = 0.5 * np.sum(np.abs(joint - expected))
+        tvd = np.sum(np.abs(joint - expected))
 
         return 2 * tvd**2
 
