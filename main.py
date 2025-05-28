@@ -7,6 +7,7 @@ from proxy_mutual_information_lipshitz import ProxyMutualInformationLipschitz
 from proxy_mutual_information_nist_contest import ProxyMutualInformationNistContest
 from proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
 from proxy_mutual_information_tvd import ProxyMutualInformationTVD
+from repair_maxsat import ProxyRepairMaxSat
 
 
 def calculate_mi_proxies(dataset, attributes, domain_paths, label):
@@ -189,26 +190,26 @@ def conditional_mi_proxies():
 
 
 if __name__ == "__main__":
-    # ----------------Unconditional MI Proxies----------------
-    unconditional_mi_proxies()
-
-    # ----------------Conditional MI Proxies----------------
-    conditional_mi_proxies()
+    # # ----------------Unconditional MI Proxies----------------
+    # unconditional_mi_proxies()
+    #
+    # # ----------------Conditional MI Proxies----------------
+    # conditional_mi_proxies()
 
     # ----------------MaxSAT Repair----------------
-    # maxsat_results = []
-    # maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("sex", "income>50K", "education"))
-    # maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("race", "income>50K", "education"))
-    # maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("education", "education-num", "sex"))
+    maxsat_results = []
+    maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("sex", "income>50K", "education"))
+    maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("race", "income>50K", "education"))
+    maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("education", "education-num", "sex"))
 
-    # maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "EdLevel", "Age"))
-    # maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "DevType", "Age"))
-    # maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "SurveyLength", "Age"))
-    # maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "SOVisitFreq", "Age"))
+    maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "EdLevel", "Age"))
+    maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "DevType", "Age"))
+    maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "SurveyLength", "Age"))
+    maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "SOVisitFreq", "Age"))
 
-    # print()
-    # maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "c_charge_desc", "age"))
-    # maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "score_text", "age"))
-    # maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "sex", "age"))
+    print()
+    maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "c_charge_desc", "age"))
+    maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "score_text", "age"))
+    maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "sex", "age"))
 
     # maxsat_results.append(ProxyRepairMaxSat('data/toy_example.csv').calculate("A", "B", "C"))

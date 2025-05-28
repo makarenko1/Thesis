@@ -1,6 +1,5 @@
 import time
 from collections import defaultdict
-from itertools import product
 
 import pandas as pd
 from z3 import Bool, Or, Not, Optimize, sat
@@ -45,12 +44,12 @@ class ProxyRepairMaxSat:
         self.dataset.replace(["NA", "N/A", ""], pd.NA, inplace=True)
         self.dataset.dropna(inplace=True, subset=[s_col, o_col, a_col])
 
+        D = list(self.dataset[[s_col, o_col, a_col]].itertuples(index=False, name=None))
+
         start_time = time.time()
 
         opt = Optimize()
-        soft_clauses, hard_clauses, D, D_star = self.conversion_to_solving_general_3cnf(
-            self.dataset[s_col], self.dataset[o_col], self.dataset[a_col]
-        )
+        soft_clauses, hard_clauses = self.conversion_to_solving_general_3cnf(D)
 
         # Add constraints to the optimizer
         for clause in soft_clauses:
@@ -71,10 +70,11 @@ class ProxyRepairMaxSat:
                 DR.add(t)
 
         # UR = number of mismatched tuples
-        UR = len(set(D).symmetric_difference(DR))
+        list_symmetric_difference = [row for row in D if row not in DR] + [row for row in DR if row not in D]
+        UR = len(list_symmetric_difference)
 
         elapsed_time = time.time() - start_time
-        print(f"Repair MaxSAT: The score for dependency '{s_col}' ⊥⊥ '{o_col}' | '{a_col}': {UR:.4f}. "
+        print(f"Repair MaxSAT: The score for dependency '{s_col}' ⊥⊥ '{o_col}' | '{a_col}': {UR}. "
               f"Calculation took {elapsed_time:.3f} seconds.")
         return UR
 
@@ -83,18 +83,14 @@ class ProxyRepairMaxSat:
         return tuple(sorted([f"x_{t1}", f"x_{t2}", f"x_{t3}"]))
 
     @staticmethod
-    def conversion_to_solving_general_3cnf(s_col_values, o_col_values, a_col_values):
+    def conversion_to_solving_general_3cnf(D):
         """
         Constructs soft and hard clauses for the MaxSAT solver using the 3CNF encoding of MVD constraints.
 
         Parameters:
         -----------
-        s_col_values : np.ndarray
-            Encoded values of the S attribute.
-        o_col_values : np.ndarray
-            Encoded values of the O attribute.
-        a_col_values : np.ndarray
-            Encoded values of the A attribute.
+        D : np.ndarray
+            Tuples of s_col values, o_col values and a_col values.
 
         Returns:
         --------
@@ -112,7 +108,6 @@ class ProxyRepairMaxSat:
         hard_clauses = set()
 
         # Step 1: Generate all valid combinations (S, O, A) based on A-grouping
-        D = set(zip(s_col_values, o_col_values, a_col_values))
         group_by_a = defaultdict(list)
         for s, o, a in D:
             group_by_a[a].append((s, o))
@@ -151,4 +146,4 @@ class ProxyRepairMaxSat:
                 hard_clauses.add(Or(Not(x_t1), Not(x_t2), x_t3))
                 used_keys.add(key)
 
-        return soft_clauses, hard_clauses, D, D_star
+        return soft_clauses, hard_clauses
