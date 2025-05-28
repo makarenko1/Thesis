@@ -1,3 +1,4 @@
+import matplotlib.patches as mpatches
 import numpy as np
 from matplotlib import pyplot as plt
 
@@ -6,7 +7,6 @@ from proxy_mutual_information_lipshitz import ProxyMutualInformationLipschitz
 from proxy_mutual_information_nist_contest import ProxyMutualInformationNistContest
 from proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
 from proxy_mutual_information_tvd import ProxyMutualInformationTVD
-from repair_maxsat import ProxyRepairMaxSat
 
 
 def calculate_mi_proxies(dataset, attributes, domain_paths, label):
@@ -33,7 +33,7 @@ def calculate_mi_proxies(dataset, attributes, domain_paths, label):
 def plot_mi_proxies(plot_name):
     """
     Plots bar charts for Mutual Information and its four proxies:
-    PrivBayes, MST, TVD, and Lipschitz-smoothed MI.
+    PrivBayes, MST, TVD, and Lipschitz-smoothed MI, each with a color legend.
 
     Parameters:
         plot_name (str): Filename to save the plot.
@@ -55,6 +55,9 @@ def plot_mi_proxies(plot_name):
         ("Lipschitz Proxy", lipschitz_results, grouped_colors['lipschitz'])
     ]
 
+    legend_labels = ["Adult", "Stackoverflow 2024", "Compas"]
+    legend_indices = [0, 3, 7]  # Index ranges for groups: 0–2, 3–6, 7–9
+
     x = np.arange(len(labels))
     fig, axes = plt.subplots(len(result_sets), 1, figsize=(14, 20), sharex=True)
 
@@ -63,6 +66,13 @@ def plot_mi_proxies(plot_name):
         ax.set_title(title)
         ax.set_ylabel("Score")
         ax.grid(False)
+
+        # Create legend from group colors
+        legend_patches = [
+            mpatches.Patch(color=colors[i], label=legend_labels[j])
+            for j, i in enumerate(legend_indices)
+        ]
+        ax.legend(handles=legend_patches, loc="upper right")
 
     plt.xticks(ticks=x, labels=labels, rotation=45, ha="right")
     plt.tight_layout()
