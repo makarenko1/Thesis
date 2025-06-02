@@ -71,7 +71,6 @@ class ProxyRepairMaxSat:
 
         # UR = number of mismatched tuples
         list_symmetric_difference = [row for row in D if row not in DR] + [row for row in DR if row not in D]
-        print(list_symmetric_difference)
         UR = len(list_symmetric_difference)
 
         elapsed_time = time.time() - start_time
