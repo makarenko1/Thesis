@@ -21,7 +21,7 @@ class ProxyMutualInformationTVD:
         """
         self.dataset = pd.read_csv(datapath)
 
-    def calculate(self, s_col, o_col, a_col=None):
+    def calculate(self, s_col, o_col, a_col=None, epsilon=None):
         """
         Calculates the TVD proxy for mutual information I(S;O) or conditional mutual information I(S;O|A).
 
@@ -55,6 +55,9 @@ class ProxyMutualInformationTVD:
             a = LabelEncoder().fit_transform(self.dataset[a_col])
             tvd = self._calculate_tvd_conditional(s, o, a)
 
+        if epsilon is not None:
+            tvd = tvd + np.random.laplace(loc=0, scale=2 / epsilon)  # the sensitivity is 2
+
         elapsed_time = time.time() - start_time
         print(
             f"TVD Proxy: Proxy Mutual Information between '{s_col}' and '{o_col}'"
@@ -82,15 +85,14 @@ class ProxyMutualInformationTVD:
         joint = np.zeros((num_s, num_o))
         for s, o in zip(s_col_values, o_col_values):
             joint[s, o] += 1
-
         joint /= len(s_col_values)
+
         p_s = joint.sum(axis=1, keepdims=True)
         p_o = joint.sum(axis=0, keepdims=True)
         expected = p_s @ p_o
 
-        tvd = np.sum(np.abs(joint - expected))
-
-        return 2 * tvd**2
+        tvd = np.sum(np.abs(joint - expected))  # tvd <= 2
+        return 2 * tvd**2  # <= 8
 
     def _calculate_tvd_conditional(self, s_col_values, o_col_values, a_col_values):
         """

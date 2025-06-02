@@ -71,6 +71,7 @@ class ProxyRepairMaxSat:
 
         # UR = number of mismatched tuples
         list_symmetric_difference = [row for row in D if row not in DR] + [row for row in DR if row not in D]
+        print(list_symmetric_difference)
         UR = len(list_symmetric_difference)
 
         elapsed_time = time.time() - start_time
@@ -99,12 +100,8 @@ class ProxyRepairMaxSat:
                 Soft clauses for optimization (encouraged but not required).
             hard_clauses : list
                 Hard constraints encoding MVD-based 3CNF rules.
-            D : list
-                Actual observed tuples (S, O, A) in the dataset.
-            D_star : set
-                All syntactically valid (S, O, A) tuples based on MVD expansion.
         """
-        soft_clauses = set()
+        soft_clauses = list()
         hard_clauses = set()
 
         # Step 1: Generate all valid combinations (S, O, A) based on A-grouping
@@ -122,9 +119,9 @@ class ProxyRepairMaxSat:
         for t in D_star:
             x_t = Bool(f"x_{t}")
             if t in D:
-                soft_clauses.add(x_t)
+                soft_clauses.append(x_t)
             else:
-                soft_clauses.add(Not(x_t))
+                soft_clauses.append(Not(x_t))
 
         # Step 3: Enforce MVD 3CNF constraints
         C = set()
