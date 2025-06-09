@@ -46,17 +46,24 @@ class ProxyMutualInformationTVD:
         columns = [s_col, o_col] + ([a_col] if a_col else [])
         self.dataset.dropna(inplace=True, subset=columns)
 
-        s = LabelEncoder().fit_transform(self.dataset[s_col])
-        o = LabelEncoder().fit_transform(self.dataset[o_col])
+        s_col_values = LabelEncoder().fit_transform(self.dataset[s_col])
+        o_col_values = LabelEncoder().fit_transform(self.dataset[o_col])
+        a_col_values = None
 
         if a_col is None:
-            tvd = self._calculate_tvd_unconditional(s, o)
+            tvd = self._calculate_tvd_unconditional(s_col_values, o_col_values)
         else:
-            a = LabelEncoder().fit_transform(self.dataset[a_col])
-            tvd = self._calculate_tvd_conditional(s, o, a)
+            a_col_values = LabelEncoder().fit_transform(self.dataset[a_col])
+            tvd = self._calculate_tvd_conditional(s_col_values, o_col_values, a_col_values)
 
         if epsilon is not None:
-            tvd = tvd + np.random.laplace(loc=0, scale=2 / epsilon)  # the sensitivity is 2
+            if a_col is None:
+                sensitivity = 1 / (6 * (len(s_col_values) + 1))
+            else:
+                unique, counts = np.unique(a_col_values, return_counts=True)
+                max_count = np.max(counts)
+                sensitivity = min((2 / (len(s_col_values) + 1)) + (6 / (max_count + 1)), 2)
+            tvd = tvd + np.random.laplace(loc=0, scale=sensitivity / epsilon)
 
         elapsed_time = time.time() - start_time
         print(

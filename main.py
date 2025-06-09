@@ -189,8 +189,8 @@ def conditional_mi_proxies():
     plot_mi_proxies("plots/plot_conditional_mutual_information_colored_by_dataset.png")
 
 def tvd_with_laplace():
-    epsilon = 1
-    num_runs = 11
+    epsilons = [1, 10, 100]
+    num_runs = 9
 
     # Attribute combinations
     adult_attributes = [
@@ -200,43 +200,54 @@ def tvd_with_laplace():
     ]
     labels = [f"{a} ⊥ {b} | {c}" for a, b, c in adult_attributes]
 
-    # Run and collect TVD values
-    all_runs = []
+    # Store results per epsilon
+    results_by_epsilon = {eps: [] for eps in epsilons}
 
-    for _ in range(num_runs):
-        run_results = []
-        for a, b, c in adult_attributes:
-            result = ProxyMutualInformationTVD("data/adult.csv").calculate(a, b, c, epsilon=epsilon)
-            run_results.append(result)
-        all_runs.append(run_results)
+    for eps in epsilons:
+        for _ in range(num_runs):
+            run_results = []
+            for a, b, c in adult_attributes:
+                score = ProxyMutualInformationTVD("data/adult.csv").calculate(a, b, c, epsilon=eps)
+                run_results.append(score)
+            results_by_epsilon[eps].append(run_results)
 
-    results_array = np.array(all_runs)  # shape: (10, 3)
-    means = np.mean(results_array, axis=0)
-    stds = np.std(results_array, axis=0)
-
-    # Create 11 subplots (11 runs + 1 summary)
-    fig, axes = plt.subplots(2, 6, figsize=(24, 10), sharey=True)
+    # Prepare plot
+    fig, axes = plt.subplots(2, 5, figsize=(24, 10), sharey=True)
     axes = axes.flatten()
+    colors = {1: "#1f77b4", 10: "#2ca02c", 100: "#d62728"}  # blue, green, red
 
-    # Plot the 10 individual runs
     for i in range(num_runs):
         ax = axes[i]
-        ax.bar(labels, results_array[i], color="#b3a2c7")
-        ax.set_title(f"Run {i + 1}")
+        for j, eps in enumerate(epsilons):
+            values = np.array(results_by_epsilon[eps])[i]
+            positions = np.arange(len(labels)) + (j - 1) * 0.2  # Offset for grouped bars
+            ax.bar(positions, values, width=0.2, label=f"ε={eps}", color=colors[eps])
+        ax.set_xticks(np.arange(len(labels)))
+        ax.set_xticklabels(labels, rotation=30)
         ax.set_ylim(0, 1.1)
-        ax.tick_params(axis='x', rotation=30)
+        ax.set_title(f"Run {i + 1}")
 
-    # Plot the summary with mean ± std
+    # Final subplot: mean ± std
     ax_summary = axes[-1]
-    ax_summary.bar(labels, means, yerr=stds, capsize=10, color="#6a51a3")
+    x = np.arange(len(labels))
+    for j, eps in enumerate(epsilons):
+        values = np.array(results_by_epsilon[eps])
+        mean = values.mean(axis=0)
+        std = values.std(axis=0)
+        positions = x + (j - 1) * 0.2
+        ax_summary.bar(positions, mean, yerr=std, capsize=8, width=0.2,
+                       label=f"ε={eps}", color=colors[eps])
     ax_summary.set_title("Mean ± Std Dev")
+    ax_summary.set_xticks(x)
+    ax_summary.set_xticklabels(labels, rotation=30)
     ax_summary.set_ylim(0, 1.1)
-    ax_summary.tick_params(axis='x', rotation=30)
 
-    # Add overall title and save
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.suptitle(f"TVD Proxy Results Across {num_runs} Runs with Laplace Noise, ε = {epsilon}", fontsize=16)
-    plt.savefig(f"plots/plot_tvd_with_laplace_noise_for_{num_runs}_runs_with_epsilon_{epsilon}.png")
+    # Final touches
+    handles, labels_legend = ax_summary.get_legend_handles_labels()
+    fig.legend(handles, labels_legend, loc="upper right", fontsize=12)
+    plt.suptitle("TVD Proxy Comparison Across Epsilons (9 Runs + Summary)", fontsize=16)
+    plt.tight_layout(rect=[0, 0.03, 0.95, 0.95])
+    plt.savefig("plots/tvd_proxy_comparison_with_laplace.png")
     plt.show()
 
 
@@ -248,23 +259,23 @@ if __name__ == "__main__":
     # conditional_mi_proxies()
 
     # -----------------------Private TVD----------------------
-    # tvd_with_laplace()
+    tvd_with_laplace()
 
     # ----------------MaxSAT Repair----------------
-    maxsat_results = []
-    maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("sex", "income>50K", "education"))
-    maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("race", "income>50K", "education"))
-    maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("education", "education-num", "sex"))
-    print()
-
-    maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "EdLevel", "Age"))
-    maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "DevType", "Age"))
-    maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "SurveyLength", "Age"))
-    maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "SOVisitFreq", "Age"))
-    print()
-
-    maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "c_charge_desc", "age"))
-    maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "score_text", "age"))
-    maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "sex", "age"))
-
-    maxsat_results.append(ProxyRepairMaxSat('data/toy_example.csv').calculate("A", "B", "C"))
+    # maxsat_results = []
+    # maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("sex", "income>50K", "education"))
+    # maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("race", "income>50K", "education"))
+    # maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("education", "education-num", "sex"))
+    # print()
+    #
+    # maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "EdLevel", "Age"))
+    # maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "DevType", "Age"))
+    # maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "SurveyLength", "Age"))
+    # maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "SOVisitFreq", "Age"))
+    # print()
+    #
+    # maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "c_charge_desc", "age"))
+    # maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "score_text", "age"))
+    # maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "sex", "age"))
+    #
+    # maxsat_results.append(ProxyRepairMaxSat('data/toy_example.csv').calculate("A", "B", "C"))
