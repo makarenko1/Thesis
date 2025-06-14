@@ -58,11 +58,11 @@ class ProxyMutualInformationTVD:
 
         if epsilon is not None:
             if a_col is None:
-                sensitivity = 1 / (6 * (len(s_col_values) + 1))
+                sensitivity = 6 / (len(s_col_values) + 1)
             else:
                 unique, counts = np.unique(a_col_values, return_counts=True)
                 max_count = np.max(counts)
-                sensitivity = min((2 / (len(s_col_values) + 1)) + (6 / (max_count + 1)), 2)
+                sensitivity = (2 / (len(s_col_values) + 1)) + (6 / (max_count + 1))
             tvd = tvd + np.random.laplace(loc=0, scale=sensitivity / epsilon)
 
         elapsed_time = time.time() - start_time
