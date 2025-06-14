@@ -98,8 +98,8 @@ class ProxyMutualInformationTVD:
         p_o = joint.sum(axis=0, keepdims=True)
         expected = p_s @ p_o
 
-        tvd = np.sum(np.abs(joint - expected))  # tvd <= 2
-        return 2 * tvd**2  # <= 8
+        tvd = 0.5 * np.sum(np.abs(joint - expected))
+        return 2 * tvd**2
 
     def _calculate_tvd_conditional(self, s_col_values, o_col_values, a_col_values):
         """

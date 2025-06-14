@@ -253,13 +253,13 @@ def tvd_with_laplace():
 
 if __name__ == "__main__":
     # ----------------Unconditional MI Proxies----------------
-    # unconditional_mi_proxies()
+    unconditional_mi_proxies()
 
     # -----------------Conditional MI Proxies-----------------
-    # conditional_mi_proxies()
+    conditional_mi_proxies()
 
     # -----------------------Private TVD----------------------
-    tvd_with_laplace()
+    # tvd_with_laplace()
 
     # ----------------MaxSAT Repair----------------
     # maxsat_results = []
