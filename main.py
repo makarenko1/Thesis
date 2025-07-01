@@ -2,7 +2,9 @@ import matplotlib.patches as mpatches
 import numpy as np
 from matplotlib import pyplot as plt
 
+from anomalous_treatment_count import AnomalousTreatmentCount
 from mutual_information import MutualInformation
+from pmi_threshold_detector import PMIThresholdDetector
 from proxy_mutual_information_lipshitz import ProxyMutualInformationLipschitz
 from proxy_mutual_information_nist_contest import ProxyMutualInformationNistContest
 from proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
@@ -253,15 +255,15 @@ def tvd_with_laplace():
 
 if __name__ == "__main__":
     # ----------------Unconditional MI Proxies----------------
-    unconditional_mi_proxies()
+    # unconditional_mi_proxies()
 
     # -----------------Conditional MI Proxies-----------------
-    conditional_mi_proxies()
+    # conditional_mi_proxies()
 
-    # -----------------------Private TVD----------------------
+    # ----------------------Private TVD-----------------------
     # tvd_with_laplace()
 
-    # ----------------MaxSAT Repair----------------
+    # --------------------MaxSAT Repair-----------------------
     # maxsat_results = []
     # maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("sex", "income>50K", "education"))
     # maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("race", "income>50K", "education"))
@@ -279,3 +281,39 @@ if __name__ == "__main__":
     # maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "sex", "age"))
     #
     # maxsat_results.append(ProxyRepairMaxSat('data/toy_example.csv').calculate("A", "B", "C"))
+
+    # ----------------Anomalous Treatment Count----------------
+    adult_attributes = [
+        ("sex", "income>50K", "education"),
+        ("race", "income>50K", "education"),
+        ("education", "education-num", "sex")
+    ]
+    for s_col, o_col, a_col in adult_attributes:
+        AnomalousTreatmentCount("data/adult.csv").calculate(s_col, o_col, a_col)
+
+    # stackoverflow_attributes = [
+    #     ("Country", "EdLevel", "Age"),
+    #     ("Country", "DevType", "Age"),
+    #     ("Country", "SurveyLength", "Age"),
+    #     ("Country", "SOVisitFreq", "Age")
+    # ]
+    # for s_col, o_col, a_col in stackoverflow_attributes:
+    #     AnomalousTreatmentCount("data/stackoverflow.csv").calculate(s_col, o_col, a_col)
+
+    # -----------------PMI Threshold Detector------------------
+    adult_attributes = [
+        ("sex", "income>50K", "education"),
+        ("race", "income>50K", "education"),
+        ("education", "education-num", "sex")
+    ]
+    for s_col, o_col, a_col in adult_attributes:
+        PMIThresholdDetector("data/adult.csv").calculate(s_col, o_col, a_col)
+
+    # stackoverflow_attributes = [
+    #     ("Country", "EdLevel", "Age"),
+    #     ("Country", "DevType", "Age"),
+    #     ("Country", "SurveyLength", "Age"),
+    #     ("Country", "SOVisitFreq", "Age")
+    # ]
+    # for s_col, o_col, a_col in stackoverflow_attributes:
+    #     PMIThresholdDetector("data/stackoverflow.csv").calculate(s_col, o_col, a_col)
