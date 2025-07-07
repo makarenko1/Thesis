@@ -261,47 +261,54 @@ def anomalous_treatment_count_pmi_shapley_repair():
         ("education", "education-num", "sex")
     ]
 
+    mutual_information_scores = []
     anomalous_counts = []
     pmi_scores = []
-    shapley_scores = []
     repair_scores = []
 
     for s_col, o_col, a_col in adult_attributes:
+        mutual_information = MutualInformation(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
         anomalous_count = AnomalousTreatmentCount(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
         pmi_score = PMIThresholdDetector(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
-        shapley_score = Shapley(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
         repair_score = ProxyRepairMaxSat(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
 
+        mutual_information_scores.append(mutual_information)
         anomalous_counts.append(anomalous_count)
         pmi_scores.append(pmi_score)
-        shapley_scores.append(shapley_score)
         repair_scores.append(repair_score)
 
     x_labels = [f"{s}\n{o}\n{a}" for s, o, a in adult_attributes]
     x = range(len(adult_attributes))
 
-    fig, axes = plt.subplots(4, 1, figsize=(10, 16), sharex=True)
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    axes = axes.flatten()
 
-    axes[0].bar(x, anomalous_counts, color="tomato")
-    axes[0].set_title("Anomalous Treatment Count")
-    axes[0].set_ylabel("Count")
+    # Plot Mutual Information
+    axes[0].bar(x, mutual_information_scores, color='skyblue')
+    axes[0].set_title("Mutual Information")
+    axes[0].set_xticks(x)
+    axes[0].set_xticklabels(x_labels, fontsize=9, rotation=0)
 
-    axes[1].bar(x, pmi_scores, color="forestgreen")
-    axes[1].set_title("PMI Threshold Detector")
-    axes[1].set_ylabel("Count")
+    # Plot Anomalous Treatment Count
+    axes[1].bar(x, anomalous_counts, color='tomato')
+    axes[1].set_title("Anomalous Treatment Count")
+    axes[1].set_xticks(x)
+    axes[1].set_xticklabels(x_labels, fontsize=9, rotation=0)
 
-    axes[2].bar(x, shapley_scores, color="steelblue")
-    axes[2].set_title("Shapley Repair Score")
-    axes[2].set_ylabel("Count")
+    # Plot PMI Threshold
+    axes[2].bar(x, pmi_scores, color='forestgreen')
+    axes[2].set_title("PMI Threshold Count")
+    axes[2].set_xticks(x)
+    axes[2].set_xticklabels(x_labels, fontsize=9, rotation=0)
 
-    axes[3].bar(x, repair_scores, color="slategray")
+    # Plot Repair MaxSAT
+    axes[3].bar(x, repair_scores, color='mediumpurple')
     axes[3].set_title("Proxy Repair MaxSAT")
-    axes[3].set_ylabel("Repair Cost")
     axes[3].set_xticks(x)
-    axes[3].set_xticklabels(x_labels, fontsize=10)
+    axes[3].set_xticklabels(x_labels, fontsize=9, rotation=0)
 
     plt.tight_layout()
-    plt.savefig("plots/anomalous_treatment_count_pmi_shapley_repair.png")
+    plt.savefig("plots/anomalous_treatment_count_pmi_repair.png")
     plt.show()
 
 
