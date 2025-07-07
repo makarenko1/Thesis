@@ -12,16 +12,21 @@ class ProxyMutualInformationPrivbayes:
     non-binary categorical features through binary encoding.
     """
 
-    def __init__(self, datapath):
+    def __init__(self, datapath=None, data=None):
         """
-        Load the dataset from a CSV file.
+        Initializes the proxy estimator with a dataset path.
 
         Parameters:
         -----------
         datapath : str
-            Path to the dataset CSV file.
+            Path to the CSV dataset file.
         """
-        self.dataset = pd.read_csv(datapath)
+        if (datapath is None and data is None) or (datapath is not None and data is not None):
+            raise Exception("Usage: Should pass either datapath or data itself")
+        if datapath is not None:
+            self.dataset = pd.read_csv(datapath)
+        else:
+            self.dataset = data
 
     def calculate(self, s_col, o_col, a_col=None):
         """
@@ -42,13 +47,12 @@ class ProxyMutualInformationPrivbayes:
             Approximated mutual information score.
         """
         self.dataset.replace(["NA", "N/A", ""], pd.NA, inplace=True)
-        columns = [s_col, o_col] + ([a_col] if a_col else [])
-        self.dataset.dropna(inplace=True, subset=columns)
-
-        self.dataset[s_col] = LabelEncoder().fit_transform(self.dataset[s_col])
-        self.dataset[o_col] = LabelEncoder().fit_transform(self.dataset[o_col])
-        if a_col:
-            self.dataset[a_col] = LabelEncoder().fit_transform(self.dataset[a_col])
+        cols = [s_col, o_col]
+        if a_col is not None:
+            cols += [a_col]
+        self.dataset.dropna(inplace=True, subset=cols)
+        for col in cols:
+            self.dataset[col] = LabelEncoder().fit_transform(self.dataset[col])
 
         start_time = time.time()
 

@@ -10,6 +10,7 @@ from proxy_mutual_information_nist_contest import ProxyMutualInformationNistCont
 from proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
 from proxy_mutual_information_tvd import ProxyMutualInformationTVD
 from repair_maxsat import ProxyRepairMaxSat
+from shapley_values import Shapley
 
 
 def calculate_mi_proxies(dataset, attributes, domain_paths, label):
@@ -17,18 +18,18 @@ def calculate_mi_proxies(dataset, attributes, domain_paths, label):
     for attribute_combination, domain_path in zip(attributes, domain_paths):
         col1, col2 = attribute_combination[0], attribute_combination[1]
         col3 = None if len(attribute_combination) == 2 else attribute_combination[2]
-        mi_results.append(MutualInformation(dataset).calculate(col1, col2, col3))
+        mi_results.append(MutualInformation(datapath=dataset).calculate(col1, col2, col3))
         privbayes_results.append(
-            ProxyMutualInformationPrivbayes(dataset).calculate(col1, col2, col3)
+            ProxyMutualInformationPrivbayes(datapath=dataset).calculate(col1, col2, col3)
         )
         mst_results.append(
-            ProxyMutualInformationNistContest(dataset).calculate(col1, col2, domain_path, col3)
+            ProxyMutualInformationNistContest(datapath=dataset).calculate(col1, col2, domain_path, col3)
         )
         tvd_results.append(
-            ProxyMutualInformationTVD(dataset).calculate(col1, col2, col3)
+            ProxyMutualInformationTVD(datapath=dataset).calculate(col1, col2, col3)
         )
         lipschitz_results.append(
-            ProxyMutualInformationLipschitz(dataset).calculate(col1, col2, col3)
+            ProxyMutualInformationLipschitz(datapath=dataset).calculate(col1, col2, col3)
         )
         print()
 
@@ -209,7 +210,7 @@ def tvd_with_laplace():
         for _ in range(num_runs):
             run_results = []
             for a, b, c in adult_attributes:
-                score = ProxyMutualInformationTVD("data/adult.csv").calculate(a, b, c, epsilon=eps)
+                score = ProxyMutualInformationTVD(datapath="data/adult.csv").calculate(a, b, c, epsilon=eps)
                 run_results.append(score)
             results_by_epsilon[eps].append(run_results)
 
@@ -253,6 +254,57 @@ def tvd_with_laplace():
     plt.show()
 
 
+def anomalous_treatment_count_pmi_shapley_repair():
+    adult_attributes = [
+        ("sex", "income>50K", "education"),
+        ("race", "income>50K", "education"),
+        ("education", "education-num", "sex")
+    ]
+
+    anomalous_counts = []
+    pmi_scores = []
+    shapley_scores = []
+    repair_scores = []
+
+    for s_col, o_col, a_col in adult_attributes:
+        anomalous_count = AnomalousTreatmentCount(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
+        pmi_score = PMIThresholdDetector(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
+        shapley_score = Shapley(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
+        repair_score = ProxyRepairMaxSat(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
+
+        anomalous_counts.append(anomalous_count)
+        pmi_scores.append(pmi_score)
+        shapley_scores.append(shapley_score)
+        repair_scores.append(repair_score)
+
+    x_labels = [f"{s}\n{o}\n{a}" for s, o, a in adult_attributes]
+    x = range(len(adult_attributes))
+
+    fig, axes = plt.subplots(4, 1, figsize=(10, 16), sharex=True)
+
+    axes[0].bar(x, anomalous_counts, color="tomato")
+    axes[0].set_title("Anomalous Treatment Count")
+    axes[0].set_ylabel("Count")
+
+    axes[1].bar(x, pmi_scores, color="forestgreen")
+    axes[1].set_title("PMI Threshold Detector")
+    axes[1].set_ylabel("Count")
+
+    axes[2].bar(x, shapley_scores, color="steelblue")
+    axes[2].set_title("Shapley Repair Score")
+    axes[2].set_ylabel("Count")
+
+    axes[3].bar(x, repair_scores, color="slategray")
+    axes[3].set_title("Proxy Repair MaxSAT")
+    axes[3].set_ylabel("Repair Cost")
+    axes[3].set_xticks(x)
+    axes[3].set_xticklabels(x_labels, fontsize=10)
+
+    plt.tight_layout()
+    plt.savefig("plots/anomalous_treatment_count_pmi_shapley_repair.png")
+    plt.show()
+
+
 if __name__ == "__main__":
     # ----------------Unconditional MI Proxies----------------
     # unconditional_mi_proxies()
@@ -265,31 +317,34 @@ if __name__ == "__main__":
 
     # --------------------MaxSAT Repair-----------------------
     # maxsat_results = []
-    # maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("sex", "income>50K", "education"))
-    # maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("race", "income>50K", "education"))
-    # maxsat_results.append(ProxyRepairMaxSat('data/adult.csv').calculate("education", "education-num", "sex"))
+    # maxsat_results.append(ProxyRepairMaxSat(datapath='data/adult.csv').calculate("sex", "income>50K", "education"))
+    # maxsat_results.append(ProxyRepairMaxSat(datapath='data/adult.csv').calculate("race", "income>50K", "education"))
+    # maxsat_results.append(ProxyRepairMaxSat(datapath='data/adult.csv').calculate("education", "education-num", "sex"))
     # print()
     #
-    # maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "EdLevel", "Age"))
-    # maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "DevType", "Age"))
-    # maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "SurveyLength", "Age"))
-    # maxsat_results.append(ProxyRepairMaxSat("data/stackoverflow.csv").calculate("Country", "SOVisitFreq", "Age"))
+    # maxsat_results.append(ProxyRepairMaxSat(datapath="data/stackoverflow.csv").calculate("Country", "EdLevel", "Age"))
+    # maxsat_results.append(ProxyRepairMaxSat(datapath="data/stackoverflow.csv").calculate("Country", "DevType", "Age"))
+    # maxsat_results.append(ProxyRepairMaxSat(datapath="data/stackoverflow.csv").calculate("Country",
+    # "SurveyLength", "Age"))
+    # maxsat_results.append(ProxyRepairMaxSat(datapath="data/stackoverflow.csv").calculate("Country",
+    # "SOVisitFreq", "Age"))
     # print()
     #
-    # maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "c_charge_desc", "age"))
-    # maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "score_text", "age"))
-    # maxsat_results.append(ProxyRepairMaxSat("data/compas-scores.csv").calculate("race", "sex", "age"))
+    # maxsat_results.append(ProxyRepairMaxSat(datapath="data/compas-scores.csv").calculate("race", "c_charge_desc",
+    # "age"))
+    # maxsat_results.append(ProxyRepairMaxSat(datapath="data/compas-scores.csv").calculate("race", "score_text", "age"))
+    # maxsat_results.append(ProxyRepairMaxSat(datapath="data/compas-scores.csv").calculate("race", "sex", "age"))
     #
-    # maxsat_results.append(ProxyRepairMaxSat('data/toy_example.csv').calculate("A", "B", "C"))
+    # maxsat_results.append(ProxyRepairMaxSat(datapath='data/toy_example.csv').calculate("A", "B", "C"))
 
     # ----------------Anomalous Treatment Count----------------
-    adult_attributes = [
-        ("sex", "income>50K", "education"),
-        ("race", "income>50K", "education"),
-        ("education", "education-num", "sex")
-    ]
-    for s_col, o_col, a_col in adult_attributes:
-        AnomalousTreatmentCount("data/adult.csv").calculate(s_col, o_col, a_col)
+    # adult_attributes = [
+    #     ("sex", "income>50K", "education"),
+    #     ("race", "income>50K", "education"),
+    #     ("education", "education-num", "sex")
+    # ]
+    # for s_col, o_col, a_col in adult_attributes:
+    #     AnomalousTreatmentCount(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
 
     # stackoverflow_attributes = [
     #     ("Country", "EdLevel", "Age"),
@@ -298,16 +353,16 @@ if __name__ == "__main__":
     #     ("Country", "SOVisitFreq", "Age")
     # ]
     # for s_col, o_col, a_col in stackoverflow_attributes:
-    #     AnomalousTreatmentCount("data/stackoverflow.csv").calculate(s_col, o_col, a_col)
+    #     AnomalousTreatmentCount(datapath="data/stackoverflow.csv").calculate(s_col, o_col, a_col)
 
     # -----------------PMI Threshold Detector------------------
-    adult_attributes = [
-        ("sex", "income>50K", "education"),
-        ("race", "income>50K", "education"),
-        ("education", "education-num", "sex")
-    ]
-    for s_col, o_col, a_col in adult_attributes:
-        PMIThresholdDetector("data/adult.csv").calculate(s_col, o_col, a_col)
+    # adult_attributes = [
+    #     ("sex", "income>50K", "education"),
+    #     ("race", "income>50K", "education"),
+    #     ("education", "education-num", "sex")
+    # ]
+    # for s_col, o_col, a_col in adult_attributes:
+    #     PMIThresholdDetector(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
 
     # stackoverflow_attributes = [
     #     ("Country", "EdLevel", "Age"),
@@ -316,4 +371,6 @@ if __name__ == "__main__":
     #     ("Country", "SOVisitFreq", "Age")
     # ]
     # for s_col, o_col, a_col in stackoverflow_attributes:
-    #     PMIThresholdDetector("data/stackoverflow.csv").calculate(s_col, o_col, a_col)
+    #     PMIThresholdDetector(datapath="data/stackoverflow.csv").calculate(s_col, o_col, a_col)
+
+    anomalous_treatment_count_pmi_shapley_repair()

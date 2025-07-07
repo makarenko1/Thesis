@@ -10,7 +10,7 @@ class ProxyMutualInformationTVD:
     If a_col is provided, computes TVD-based proxy for I(S;O|A). Otherwise, computes I(S;O).
     """
 
-    def __init__(self, datapath):
+    def __init__(self, datapath=None, data=None):
         """
         Initializes the proxy estimator with a dataset path.
 
@@ -19,7 +19,12 @@ class ProxyMutualInformationTVD:
         datapath : str
             Path to the CSV dataset file.
         """
-        self.dataset = pd.read_csv(datapath)
+        if (datapath is None and data is None) or (datapath is not None and data is not None):
+            raise Exception("Usage: Should pass either datapath or data itself")
+        if datapath is not None:
+            self.dataset = pd.read_csv(datapath)
+        else:
+            self.dataset = data
 
     def calculate(self, s_col, o_col, a_col=None, epsilon=None):
         """
@@ -43,17 +48,20 @@ class ProxyMutualInformationTVD:
 
         # Clean and encode data
         self.dataset.replace(["NA", "N/A", ""], pd.NA, inplace=True)
-        columns = [s_col, o_col] + ([a_col] if a_col else [])
-        self.dataset.dropna(inplace=True, subset=columns)
+        cols = [s_col, o_col]
+        if a_col is not None:
+            cols += [a_col]
+        self.dataset.dropna(inplace=True, subset=cols)
+        for col in cols:
+            self.dataset[col] = LabelEncoder().fit_transform(self.dataset[col])
 
-        s_col_values = LabelEncoder().fit_transform(self.dataset[s_col])
-        o_col_values = LabelEncoder().fit_transform(self.dataset[o_col])
-        a_col_values = None
+        s_col_values = self.dataset[s_col]
+        o_col_values = self.dataset[o_col]
+        a_col_values = self.dataset[a_col]
 
         if a_col is None:
             tvd = self._calculate_tvd_unconditional(s_col_values, o_col_values)
         else:
-            a_col_values = LabelEncoder().fit_transform(self.dataset[a_col])
             tvd = self._calculate_tvd_conditional(s_col_values, o_col_values, a_col_values)
 
         if epsilon is not None:

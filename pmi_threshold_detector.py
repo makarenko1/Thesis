@@ -6,16 +6,21 @@ from sklearn.preprocessing import LabelEncoder
 
 
 class PMIThresholdDetector:
-    def __init__(self, datapath):
+    def __init__(self, datapath=None, data=None):
         """
-        Initializes the PMIThresholdDetector object.
+        Initializes the proxy estimator with a dataset path.
 
         Parameters:
         -----------
         datapath : str
             Path to the CSV dataset file.
         """
-        self.dataset = pd.read_csv(datapath)
+        if (datapath is None and data is None) or (datapath is not None and data is not None):
+            raise Exception("Usage: Should pass either datapath or data itself")
+        if datapath is not None:
+            self.dataset = pd.read_csv(datapath)
+        else:
+            self.dataset = data
 
     def calculate(self, s_col, o_col, a_col, threshold=0.25):
         """
