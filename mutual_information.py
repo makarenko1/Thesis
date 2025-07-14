@@ -62,7 +62,7 @@ class MutualInformation:
 
         end_time = time.time()  # Record end time
         elapsed_time = end_time - start_time
-        print(f"Regular Mutual Information between '{s_col}' and '{o_col}'" +
+        print(f"Regular Mutual Information for dependency '{s_col}' ⫫ '{o_col}'" +
               (f" | {a_col}" if a_col is not None else "") +
               f"is: {mi:.4f}. Calculation took {elapsed_time:.3f} seconds.")
         return round(mi, 4)

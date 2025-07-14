@@ -10,7 +10,7 @@ from proxy_mutual_information_nist_contest import ProxyMutualInformationNistCont
 from proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
 from proxy_mutual_information_tvd import ProxyMutualInformationTVD
 from repair_maxsat import ProxyRepairMaxSat
-from shapley_values import Shapley
+from shapley_values import ShapleyValues
 
 
 def calculate_mi_proxies(dataset, attributes, domain_paths, label):
@@ -191,6 +191,7 @@ def conditional_mi_proxies():
     calculate_mi_proxies("data/compas-scores.csv", compas_attributes, compas_domains, "Compas")
     plot_mi_proxies("plots/plot_conditional_mutual_information_colored_by_dataset.png")
 
+
 def tvd_with_laplace():
     epsilons = [1, 10, 100]
     num_runs = 9
@@ -250,65 +251,95 @@ def tvd_with_laplace():
     fig.legend(handles, labels_legend, loc="upper right", fontsize=12)
     plt.suptitle("TVD Proxy Comparison Across Epsilons (9 Runs + Summary)", fontsize=16)
     plt.tight_layout(rect=[0, 0.03, 0.95, 0.95])
-    plt.savefig("plots/tvd_proxy_comparison_with_laplace.png")
+    plt.savefig("plots/plot_tvd_proxy_comparison_with_laplace.png")
     plt.show()
 
 
-def anomalous_treatment_count_pmi_shapley_repair():
+def plot_anomalous_treatment_count_pmi_repair():
+    labels = [
+        "sex/income | education", "race/income | education", "education/education-num | sex",
+        "Country/EdLevel | Age", "Country/DevType | Age", "Country/SurveyLength | Age", "Country/SOVisitFreq | Age",
+        "race/charge_desc | age", "race/score_text | age", "race/sex | age"
+    ]
+
+    # Define attribute triplets
     adult_attributes = [
         ("sex", "income>50K", "education"),
         ("race", "income>50K", "education"),
         ("education", "education-num", "sex")
     ]
+    stackoverflow_attributes = [
+        ("Country", "EdLevel", "Age"),
+        ("Country", "DevType", "Age"),
+        ("Country", "SurveyLength", "Age"),
+        ("Country", "SOVisitFreq", "Age")
+    ]
+    compas_attributes = [
+        ("race", "c_charge_desc", "age"),
+        ("race", "score_text", "age"),
+        ("race", "sex", "age")
+    ]
 
+    all_attributes = adult_attributes + stackoverflow_attributes + compas_attributes
+    all_paths = ["data/adult.csv"] * len(adult_attributes) + \
+                ["data/stackoverflow.csv"] * len(stackoverflow_attributes) + \
+                ["data/compas.csv"] * len(compas_attributes)
+
+    # Prepare result containers
     mutual_information_scores = []
     anomalous_counts = []
     pmi_scores = []
     repair_scores = []
 
-    for s_col, o_col, a_col in adult_attributes:
-        mutual_information = MutualInformation(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
-        anomalous_count = AnomalousTreatmentCount(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
-        pmi_score = PMIThresholdDetector(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
-        repair_score = ProxyRepairMaxSat(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
+    # Compute metric values
+    for (s_col, o_col, a_col), path in zip(all_attributes, all_paths):
+        mutual_information = MutualInformation(datapath=path).calculate(s_col, o_col, a_col)
+        anomalous_count = AnomalousTreatmentCount(datapath=path).calculate(s_col, o_col, a_col)
+        pmi_score = PMIThresholdDetector(datapath=path).calculate(s_col, o_col, a_col)
+        repair_score = ProxyRepairMaxSat(datapath=path).calculate(s_col, o_col, a_col)
 
         mutual_information_scores.append(mutual_information)
         anomalous_counts.append(anomalous_count)
         pmi_scores.append(pmi_score)
         repair_scores.append(repair_score)
 
-    x_labels = [f"{s}\n{o}\n{a}" for s, o, a in adult_attributes]
-    x = range(len(adult_attributes))
+    # Grouped color coding for datasets
+    grouped_colors = {
+        'adult': ['#b3cde3'] * len(adult_attributes),
+        'stackoverflow': ['#6497b1'] * len(stackoverflow_attributes),
+        'compas': ['#005b96'] * len(compas_attributes)
+    }
+    colors = grouped_colors['adult'] + grouped_colors['stackoverflow'] + grouped_colors['compas']
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    datasets = ["Adult", "Stackoverflow 2024", "Compas"]
+    legend_indices = [0, len(adult_attributes), len(adult_attributes) + len(stackoverflow_attributes)]
+
+    x = np.arange(len(labels))
+    metrics = [
+        ("Mutual Information", mutual_information_scores),
+        ("Anomalous Treatment Count", anomalous_counts),
+        ("PMI Threshold Count", pmi_scores),
+        ("Proxy Repair MaxSAT", repair_scores)
+    ]
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharex=True)
     axes = axes.flatten()
 
-    # Plot Mutual Information
-    axes[0].bar(x, mutual_information_scores, color='skyblue')
-    axes[0].set_title("Mutual Information")
-    axes[0].set_xticks(x)
-    axes[0].set_xticklabels(x_labels, fontsize=9, rotation=0)
+    for ax, (title, values) in zip(axes, metrics):
+        ax.bar(x, values, color=colors)
+        ax.set_title(title)
+        ax.set_ylabel("Score")
+        ax.grid(False)
 
-    # Plot Anomalous Treatment Count
-    axes[1].bar(x, anomalous_counts, color='tomato')
-    axes[1].set_title("Anomalous Treatment Count")
-    axes[1].set_xticks(x)
-    axes[1].set_xticklabels(x_labels, fontsize=9, rotation=0)
+        legend_patches = [
+            mpatches.Patch(color=colors[i], label=datasets[j])
+            for j, i in enumerate(legend_indices)
+        ]
+        ax.legend(handles=legend_patches, loc="upper right")
 
-    # Plot PMI Threshold
-    axes[2].bar(x, pmi_scores, color='forestgreen')
-    axes[2].set_title("PMI Threshold Count")
-    axes[2].set_xticks(x)
-    axes[2].set_xticklabels(x_labels, fontsize=9, rotation=0)
-
-    # Plot Repair MaxSAT
-    axes[3].bar(x, repair_scores, color='mediumpurple')
-    axes[3].set_title("Proxy Repair MaxSAT")
-    axes[3].set_xticks(x)
-    axes[3].set_xticklabels(x_labels, fontsize=9, rotation=0)
-
+    plt.xticks(ticks=x, labels=labels, rotation=45, ha="right")
     plt.tight_layout()
-    plt.savefig("plots/anomalous_treatment_count_pmi_repair.png")
+    plt.savefig("plots/plot_anomalous_treatment_count_pmi_repair.png")
     plt.show()
 
 
@@ -380,4 +411,6 @@ if __name__ == "__main__":
     # for s_col, o_col, a_col in stackoverflow_attributes:
     #     PMIThresholdDetector(datapath="data/stackoverflow.csv").calculate(s_col, o_col, a_col)
 
-    anomalous_treatment_count_pmi_shapley_repair()
+    # plot_anomalous_treatment_count_pmi_repair()
+
+    ShapleyValues(datapath="data/adult.csv").calculate("sex", "income>50K", "education")

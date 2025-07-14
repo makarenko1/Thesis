@@ -2,6 +2,7 @@ import time
 from collections import defaultdict
 
 import pandas as pd
+from sklearn.preprocessing import LabelEncoder
 from z3 import Bool, Or, Not, Optimize, sat
 
 
@@ -23,7 +24,7 @@ class ProxyRepairMaxSat:
         """
         self.dataset = pd.read_csv(datapath)
 
-    def calculate(self, s_col, o_col, a_col):
+    def calculate(self, s_col, o_col, a_col=None):
         """
         Computes the MaxSAT-based proxy score for conditional dependence between s_col and o_col given a_col.
 
@@ -42,15 +43,20 @@ class ProxyRepairMaxSat:
             The number of tuples violating multivalued dependency constraints.
         """
         self.dataset.replace(["NA", "N/A", ""], pd.NA, inplace=True)
-        self.dataset.dropna(inplace=True, subset=[s_col, o_col, a_col])
+        cols = [s_col, o_col]
+        if a_col is not None:
+            cols += [a_col]
+        self.dataset.dropna(inplace=True, subset=cols)
+        for col in cols:
+            self.dataset[col] = LabelEncoder().fit_transform(self.dataset[col])
 
-        D = list(self.dataset[[s_col, o_col, a_col]].itertuples(index=False, name=None))
+        D = list(self.dataset[cols].itertuples(index=False, name=None))
 
         start_time = time.time()
 
-        opt = Optimize()
-        soft_clauses, hard_clauses = self.conversion_to_solving_general_3cnf(D)
+        soft_clauses, hard_clauses = self.conversion_to_solving_general_3cnf(D, a_col)
 
+        opt = Optimize()
         # Add constraints to the optimizer
         for clause in soft_clauses:
             opt.add_soft(clause, weight=1)
@@ -74,7 +80,8 @@ class ProxyRepairMaxSat:
         UR = len(list_symmetric_difference)
 
         elapsed_time = time.time() - start_time
-        print(f"Repair MaxSAT: The score for dependency '{s_col}' ⊥⊥ '{o_col}' | '{a_col}': {UR}. "
+        print(f"Repair MaxSAT: The score for dependency '{s_col}' ⫫ '{o_col}'" +
+              (f" | {a_col}" if a_col is not None else "") + f" is: {UR}. "
               f"Calculation took {elapsed_time:.3f} seconds.")
         return UR
 
@@ -83,7 +90,7 @@ class ProxyRepairMaxSat:
         return tuple(sorted([f"x_{t1}", f"x_{t2}", f"x_{t3}"]))
 
     @staticmethod
-    def conversion_to_solving_general_3cnf(D):
+    def conversion_to_solving_general_3cnf(D, a_col):
         """
         Constructs soft and hard clauses for the MaxSAT solver using the 3CNF encoding of MVD constraints.
 
@@ -91,6 +98,8 @@ class ProxyRepairMaxSat:
         -----------
         D : np.ndarray
             Tuples of s_col values, o_col values and a_col values.
+        a_col: Optional[str]
+            Name of the A attribute.
 
         Returns:
         --------
@@ -103,18 +112,25 @@ class ProxyRepairMaxSat:
         soft_clauses = list()
         hard_clauses = set()
 
-        # Step 1: Generate all valid combinations (S, O, A) based on A-grouping
-        group_by_a = defaultdict(list)
-        for s, o, a in D:
-            group_by_a[a].append((s, o))
-        D_star = {
-            (s1, o2, a)
-            for a, pairs in group_by_a.items()
-            for s1, _ in pairs
-            for _, o2 in pairs
-        }
+        # Step 1: Create D_star
+        if a_col is not None:
+            group_by_a = defaultdict(list)
+            for s, o, a in D:
+                group_by_a[a].append((s, o))
+            D_star = {
+                (s1, o2, a)
+                for a, pairs in group_by_a.items()
+                for s1, _ in pairs
+                for _, o2 in pairs
+            }
+        else:
+            D_star = {
+                (s1, o2)
+                for s1, _ in D
+                for _, o2 in D
+            }
 
-        # Step 2: Create soft clauses for each (S, O, A) tuple
+        # Step 2: Create soft clauses for each tuple
         for t in D_star:
             x_t = Bool(f"x_{t}")
             if t in D:
@@ -124,16 +140,29 @@ class ProxyRepairMaxSat:
 
         # Step 3: Enforce MVD 3CNF constraints
         C = set()
-        for (s1, o1, a1) in D_star:
-            for (s2, o2, a2) in D_star:
-                if a1 == a2 and s1 != s2 and o1 != o2:
-                    C.add((s1, o1, s2, o2, a1))
+        if a_col is not None:
+            for (s1, o1, a1) in D_star:
+                for (s2, o2, a2) in D_star:
+                    if a1 == a2 and s1 != s2 and o1 != o2:
+                        C.add((s1, o1, s2, o2, a1))
+        else:
+            for (s1, o1) in D_star:
+                for (s2, o2) in D_star:
+                    if s1 != s2 and o1 != o2:
+                        C.add((s1, o1, s2, o2))
 
         used_keys = set()
-        for (s1, o1, s2, o2, a) in C:
-            t1 = (s1, o1, a)
-            t2 = (s2, o2, a)
-            t3 = (s1, o2, a)
+        for t in C:
+            if a_col is not None:
+                s1, o1, s2, o2, a = t
+                t1 = (s1, o1, a)
+                t2 = (s2, o2, a)
+                t3 = (s1, o2, a)
+            else:
+                s1, o1, s2, o2 = t
+                t1 = (s1, o1)
+                t2 = (s2, o2)
+                t3 = (s1, o2)
             x_t1 = Bool(f"x_{t1}")
             x_t2 = Bool(f"x_{t2}")
             x_t3 = Bool(f"x_{t3}")

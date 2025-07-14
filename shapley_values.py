@@ -9,7 +9,7 @@ from sklearn.preprocessing import LabelEncoder
 from proxy_mutual_information_tvd import ProxyMutualInformationTVD
 
 
-class Shapley:
+class ShapleyValues:
     def __init__(self, datapath):
         """
         Initializes the ShapleyTVDUnfairness object.
@@ -23,7 +23,7 @@ class Shapley:
         """
         self.dataset = pd.read_csv(datapath)
 
-    def calculate(self, s_col, o_col, a_col=None, threshold=0.01, sample_size=100, times=100):
+    def calculate(self, s_col, o_col, a_col=None, threshold=0.01, sample_size=10, times=10):
         """
         Calculates Shapley-based unfairness score.
 
@@ -33,8 +33,8 @@ class Shapley:
             Sensitive attribute name (S).
         o_col : str
             Outcome attribute name (O).
-        a_col : strromeshort
-            Admissible attribute name (A).carmenmartin cropjupe camila
+        a_col : str
+            Admissible attribute name (A).
         threshold : float
             Threshold for a tuple's average Shapley value.
         times : int

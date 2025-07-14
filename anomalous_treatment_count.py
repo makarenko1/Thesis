@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 
@@ -14,7 +15,11 @@ class AnomalousTreatmentCount:
         """
         self.dataset = pd.read_csv(datapath)
 
-    def calculate(self, s_col, o_col, a_col, threshold=0.25, epsilon=1e-9):
+    @staticmethod
+    def sigmoid(x):
+        return 1 / (1 + np.exp(-x))
+
+    def calculate(self, s_col, o_col, a_col, threshold=0.25):
         """
         Calculates the Anomalous Treatment Count score.
 
@@ -27,7 +32,7 @@ class AnomalousTreatmentCount:
         a_col : str
             Name of the admissible/context attribute (A).
         threshold : float
-            Threshold for deviation from stratum outcome rate (default: 0.05).
+            Threshold for deviation from stratum outcome rate.
 
         Returns:
         --------
@@ -52,17 +57,26 @@ class AnomalousTreatmentCount:
         # Compute subgroup outcome rates
         subgroup_rates = df.groupby([s_col, a_col])[o_col].mean().astype(float)
 
+        group_counts = df.groupby([s_col, a_col]).size()
+
+        # ---------- OLD NOT SMOOTHED VERSION: -----------
         # Count individuals in anomalous subgroups
-        anomalous_groups = []
+        # anomalous_groups = []
+        # for (s, a), subgroup_rate in subgroup_rates.items():
+        #     base_rate = base_rates.loc[a]
+        #     if abs(subgroup_rate - base_rate) > threshold:
+        #         anomalous_groups.append((s, a))
+        # Filter individuals in anomalous groups and count
+        # is_anomalous = df[[s_col, a_col]].apply(tuple, axis=1).isin(anomalous_groups)
+        # count = is_anomalous.sum()
+
+        smoothed_count = 0
         for (s, a), subgroup_rate in subgroup_rates.items():
             base_rate = base_rates.loc[a]
-            if abs(subgroup_rate - base_rate) > threshold + epsilon:
-                anomalous_groups.append((s, a))
+            deviation = abs(subgroup_rate - base_rate)
+            prob = self.sigmoid((deviation - threshold) / 0.01)
+            smoothed_count += group_counts.loc[(s, a)] * prob
 
-        # Filter individuals in anomalous groups and count
-        is_anomalous = df[[s_col, a_col]].apply(tuple, axis=1).isin(anomalous_groups)
-        count = is_anomalous.sum()
-
-        print(f"Anomalous Treatment Count: {count} individuals in unfair groups for dependency "
+        print(f"Anomalous Treatment Count: {smoothed_count} individuals in unfair groups for dependency "
               f"{s_col} ⫫ {o_col} | {a_col} and threshold {threshold}.")
-        return count
+        return smoothed_count
