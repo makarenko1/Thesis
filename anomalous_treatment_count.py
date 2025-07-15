@@ -51,22 +51,35 @@ class AnomalousTreatmentCount:
             print("Warning: Dataset is empty after cleaning.")
             return 0
 
-        # Compute stratum base rates
-        base_rates = df.groupby(a_col)[o_col].mean().astype(float)
+        # ---------- OLD RATES WITHOUT FAVORABLE VALUE: ---------
+        # # Compute stratum base rates
+        # base_rates = df.groupby(a_col)[o_col].mean().astype(float)
+        #
+        # # Compute subgroup outcome rates
+        # subgroup_rates = df.groupby([s_col, a_col])[o_col].mean().astype(float)
 
-        # Compute subgroup outcome rates
-        subgroup_rates = df.groupby([s_col, a_col])[o_col].mean().astype(float)
+        favorable_value = df[o_col].value_counts().idxmax()
+
+        # Compute stratum base rates (P(O = favorable | A))
+        base_rates = df.groupby(a_col).apply(
+            lambda g: (g[o_col] == favorable_value).sum() / len(g)
+        )
+
+        # Compute subgroup outcome rates (P(O = favorable | S, A))
+        subgroup_rates = df.groupby([s_col, a_col]).apply(
+            lambda g: (g[o_col] == favorable_value).sum() / len(g)
+        )
 
         group_counts = df.groupby([s_col, a_col]).size()
 
         # ---------- OLD NOT SMOOTHED VERSION: -----------
-        # Count individuals in anomalous subgroups
+        # # Count individuals in anomalous subgroups
         # anomalous_groups = []
         # for (s, a), subgroup_rate in subgroup_rates.items():
         #     base_rate = base_rates.loc[a]
         #     if abs(subgroup_rate - base_rate) > threshold:
         #         anomalous_groups.append((s, a))
-        # Filter individuals in anomalous groups and count
+        # # Filter individuals in anomalous groups and count
         # is_anomalous = df[[s_col, a_col]].apply(tuple, axis=1).isin(anomalous_groups)
         # count = is_anomalous.sum()
 
