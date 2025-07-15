@@ -90,6 +90,8 @@ class AnomalousTreatmentCount:
             prob = self.sigmoid((deviation - threshold) / 0.01)
             smoothed_count += group_counts.loc[(s, a)] * prob
 
+        smoothed_count = round(smoothed_count)
+
         print(f"Anomalous Treatment Count: {smoothed_count} individuals in unfair groups for dependency "
               f"{s_col} ⫫ {o_col} | {a_col} and threshold {threshold}.")
         return smoothed_count
