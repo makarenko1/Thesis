@@ -326,10 +326,17 @@ def plot_anomalous_treatment_count_pmi_repair():
     axes = axes.flatten()
 
     for ax, (title, values) in zip(axes, metrics):
-        ax.bar(x, values, color=colors)
+        bars = ax.bar(x, values, color=colors)
         ax.set_title(title)
         ax.set_ylabel("Score")
         ax.grid(False)
+
+        # Annotate values on bars
+        for bar in bars:
+            height = bar.get_height()
+            ax.annotate(f'{height:.1f}', xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3), textcoords="offset points",
+                        ha='center', va='bottom', fontsize=8)
 
         legend_patches = [
             mpatches.Patch(color=colors[i], label=datasets[j])
@@ -394,23 +401,24 @@ if __name__ == "__main__":
     #     AnomalousTreatmentCount(datapath="data/stackoverflow.csv").calculate(s_col, o_col, a_col)
 
     # -----------------PMI Threshold Detector------------------
-    # adult_attributes = [
-    #     ("sex", "income>50K", "education"),
-    #     ("race", "income>50K", "education"),
-    #     ("education", "education-num", "sex")
-    # ]
-    # for s_col, o_col, a_col in adult_attributes:
-    #     PMIThresholdDetector(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
+    adult_attributes = [
+        ("sex", "income>50K", "education"),
+        ("race", "income>50K", "education"),
+        ("education", "education-num", "sex")
+    ]
+    for s_col, o_col, a_col in adult_attributes:
+        PMIThresholdDetector(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
 
-    # stackoverflow_attributes = [
-    #     ("Country", "EdLevel", "Age"),
-    #     ("Country", "DevType", "Age"),
-    #     ("Country", "SurveyLength", "Age"),
-    #     ("Country", "SOVisitFreq", "Age")
-    # ]
-    # for s_col, o_col, a_col in stackoverflow_attributes:
-    #     PMIThresholdDetector(datapath="data/stackoverflow.csv").calculate(s_col, o_col, a_col)
+    stackoverflow_attributes = [
+        ("Country", "EdLevel", "Age"),
+        ("Country", "DevType", "Age"),
+        ("Country", "SurveyLength", "Age"),
+        ("Country", "SOVisitFreq", "Age")
+    ]
+    for s_col, o_col, a_col in stackoverflow_attributes:
+        PMIThresholdDetector(datapath="data/stackoverflow.csv").calculate(s_col, o_col, a_col)
 
-    # plot_anomalous_treatment_count_pmi_repair()
+    plot_anomalous_treatment_count_pmi_repair()
 
-    ShapleyValues(datapath="data/adult.csv").calculate("sex", "income>50K", "education")
+    # -----------------Shapley Values------------------
+    # ShapleyValues(datapath="data/adult.csv").calculate("sex", "income>50K", "education")
