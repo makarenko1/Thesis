@@ -10,7 +10,7 @@ from proxy_mutual_information_nist_contest import ProxyMutualInformationNistCont
 from proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
 from proxy_mutual_information_tvd import ProxyMutualInformationTVD
 from repair_maxsat import ProxyRepairMaxSat
-from shapley_values import ShapleyValues
+from shapley_values import ShapleyValues, LayeredShapleyValues
 
 
 def calculate_mi_proxies(dataset, attributes, domain_paths, label):
@@ -401,24 +401,24 @@ if __name__ == "__main__":
     #     AnomalousTreatmentCount(datapath="data/stackoverflow.csv").calculate(s_col, o_col, a_col)
 
     # -----------------PMI Threshold Detector------------------
-    adult_attributes = [
-        ("sex", "income>50K", "education"),
-        ("race", "income>50K", "education"),
-        ("education", "education-num", "sex")
-    ]
-    for s_col, o_col, a_col in adult_attributes:
-        PMIThresholdDetector(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
-
-    stackoverflow_attributes = [
-        ("Country", "EdLevel", "Age"),
-        ("Country", "DevType", "Age"),
-        ("Country", "SurveyLength", "Age"),
-        ("Country", "SOVisitFreq", "Age")
-    ]
-    for s_col, o_col, a_col in stackoverflow_attributes:
-        PMIThresholdDetector(datapath="data/stackoverflow.csv").calculate(s_col, o_col, a_col)
-
-    plot_anomalous_treatment_count_pmi_repair()
+    # adult_attributes = [
+    #     ("sex", "income>50K", "education"),
+    #     ("race", "income>50K", "education"),
+    #     ("education", "education-num", "sex")
+    # ]
+    # for s_col, o_col, a_col in adult_attributes:
+    #     PMIThresholdDetector(datapath="data/adult.csv").calculate(s_col, o_col, a_col)
+    #
+    # stackoverflow_attributes = [
+    #     ("Country", "EdLevel", "Age"),
+    #     ("Country", "DevType", "Age"),
+    #     ("Country", "SurveyLength", "Age"),
+    #     ("Country", "SOVisitFreq", "Age")
+    # ]
+    # for s_col, o_col, a_col in stackoverflow_attributes:
+    #     PMIThresholdDetector(datapath="data/stackoverflow.csv").calculate(s_col, o_col, a_col)
+    #
+    # plot_anomalous_treatment_count_pmi_repair()
 
     # -----------------Shapley Values------------------
-    # ShapleyValues(datapath="data/adult.csv").calculate("sex", "income>50K", "education")
+    LayeredShapleyValues(datapath="data/adult.csv").calculate("sex", "income>50K", "education")

@@ -1,8 +1,10 @@
 import copy
 import math
 import random
+import time
 from collections import defaultdict
 
+import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 
@@ -26,7 +28,7 @@ class LayeredShapleyValues:
         else:
             self.dataset = data
 
-    def calculate(self, s_col, o_col, a_col=None, alpha=1, beta=1, threshold=0.01):
+    def calculate(self, s_col, o_col, a_col=None, alpha=10, beta=10, threshold=0.01, data=None):
         """
         Calculates Shapley-based unfairness score according to the Layered Shapley Algorithm.
 
@@ -48,15 +50,19 @@ class LayeredShapleyValues:
         int
             Number of tuples whose average Shapley value exceeds the threshold.
         """
-        self.dataset.replace(["NA", "N/A", ""], pd.NA, inplace=True)
         cols = [s_col, o_col]
         if a_col is not None:
             cols += [a_col]
-        self.dataset.dropna(inplace=True, subset=cols)
-        for col in cols:
-            self.dataset[col] = LabelEncoder().fit_transform(self.dataset[col])
 
-        D = self.dataset[cols].to_numpy().tolist()
+        if data is None:
+            self.dataset.replace(["NA", "N/A", ""], pd.NA, inplace=True)
+            self.dataset.dropna(inplace=True, subset=cols)
+            for col in cols:
+                self.dataset[col] = LabelEncoder().fit_transform(self.dataset[col])
+
+        start_time = time.time()  # Record start time
+
+        D = self.dataset[cols].to_numpy().tolist() if data is None else data
         n = len(D)
         avg_shapley_values_per_tuple = defaultdict(lambda: 0)
 
@@ -64,7 +70,8 @@ class LayeredShapleyValues:
             shapley_estimate_for_all_levels = 0
             for k in range(1, n):
                 shapley_estimate_for_kth_level = 0
-                m_k = (2 ** 2 / (2 * alpha ** 2 * k ** 2)) * math.log(2 * n / beta, math.e)
+                m_k = math.ceil(((2 ** 2) / (2 * (alpha ** 2) * (k ** 2))) *
+                                math.log(2 * n / beta, math.e))
 
                 for _ in range(m_k):
                     S = random.sample(D, k)
@@ -83,9 +90,58 @@ class LayeredShapleyValues:
             if avg_shapley_values_per_tuple[tuple(t)] >= threshold:
                 num_tuples_with_shapley_above_threshold += 1
 
+        end_time = time.time()  # Record end time
+        elapsed_time = end_time - start_time
         print(f"Layered Shapley: {num_tuples_with_shapley_above_threshold} tuples flagged above threshold {threshold} "
-              f"with alpha {alpha} and beta {beta}")
+              f"with alpha {alpha} and beta {beta}. Calculation took {elapsed_time:.3f} seconds.")
         return num_tuples_with_shapley_above_threshold
+
+    def calculate_with_smart_threshold(self, t, s_col, o_col, a_col, iterations=100):
+        """
+        Calculates whether a tuple t is statistically significant using permutation testing.
+        Corresponds to the permutation test shown in the provided pseudocode.
+
+        Parameters:
+        -----------
+        t : pd.Series
+            The tuple for which we are checking significance.
+        s_col : str
+            Name of the sensitive attribute (S).
+        o_col : str
+            Name of the outcome attribute (O).
+        a_col : str
+            Name of the admissible attribute (A).
+        iterations : int
+            Number of random permutations to perform (m in the pseudocode).
+
+        Returns:
+        --------
+        bool
+            True if p-value < 0.05, otherwise False.
+        """
+
+        # Step 1: Subset the dataset to only rows where A == t[A]
+        a_value = t[a_col]
+        D_a = self.dataset[self.dataset[a_col] == a_value].copy()
+
+        # Step 2: Compute the actual test statistic M on the original data
+        true_score = self.calculate(s_col, o_col, a_col, data=D_a)
+
+        # Step 3–5: Perform m random permutations and compute statistics
+        count = 0
+        for _ in range(iterations):
+            D_i = D_a.copy()
+            D_i[s_col] = np.random.permutation(D_i[s_col].values)
+            D_i[o_col] = np.random.permutation(D_i[o_col].values)
+            permuted_score = self.calculate(s_col, o_col, a_col, data=D_i)
+            if permuted_score >= true_score:
+                count += 1
+
+        # Step 6: Compute p-value
+        p = (1 + count) / (1 + iterations)
+
+        # Step 7–9: Return True if statistically significant
+        return p < 0.05
 
 
 class ShapleyValues:
@@ -135,6 +191,8 @@ class ShapleyValues:
         for col in cols:
             self.dataset[col] = LabelEncoder().fit_transform(self.dataset[col])
 
+        start_time = time.time()  # Record start time
+
         D = self.dataset[cols].to_numpy().tolist()
         avg_shapley_values_per_tuple = defaultdict(lambda: 0)
 
@@ -157,6 +215,8 @@ class ShapleyValues:
             if avg_shapley_values_per_tuple[tuple(t)] >= threshold:
                 num_tuples_with_shapley_above_threshold += 1
 
+        end_time = time.time()  # Record end time
+        elapsed_time = end_time - start_time
         print(f"Shapley: {num_tuples_with_shapley_above_threshold} tuples flagged above threshold {threshold} with "
-              f"sample size {sample_size} and num iterations {times}")
+              f"sample size {sample_size} and num iterations {times}. Calculation took {elapsed_time:.3f} seconds.")
         return num_tuples_with_shapley_above_threshold
