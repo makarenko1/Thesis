@@ -28,7 +28,7 @@ class LayeredShapleyValues:
         else:
             self.dataset = data
 
-    def calculate(self, s_col, o_col, a_col=None, alpha=10, beta=10, threshold=0.01, data=None):
+    def calculate(self, s_col, o_col, a_col=None, alpha=10, beta=10, threshold=0.01, n=10, data=None):
         """
         Calculates Shapley-based unfairness score according to the Layered Shapley Algorithm.
 
@@ -63,7 +63,6 @@ class LayeredShapleyValues:
         start_time = time.time()  # Record start time
 
         D = self.dataset[cols].to_numpy().tolist() if data is None else data
-        n = len(D)
         avg_shapley_values_per_tuple = defaultdict(lambda: 0)
 
         for t in D:
@@ -96,7 +95,7 @@ class LayeredShapleyValues:
               f"with alpha {alpha} and beta {beta}. Calculation took {elapsed_time:.3f} seconds.")
         return num_tuples_with_shapley_above_threshold
 
-    def calculate_with_smart_threshold(self, t, s_col, o_col, a_col, iterations=100):
+    def calculate_with_smart_threshold(self, t, s_col, o_col, a_col, iterations=1):
         """
         Calculates whether a tuple t is statistically significant using permutation testing.
         Corresponds to the permutation test shown in the provided pseudocode.
