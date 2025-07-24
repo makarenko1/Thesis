@@ -59,6 +59,7 @@ class LayeredShapleyValues:
             self.dataset.dropna(inplace=True, subset=cols)
             for col in cols:
                 self.dataset[col] = LabelEncoder().fit_transform(self.dataset[col])
+        self.dataset = self.dataset[cols]
 
         start_time = time.time()  # Record start time
 
@@ -95,7 +96,7 @@ class LayeredShapleyValues:
               f"with alpha {alpha} and beta {beta}. Calculation took {elapsed_time:.3f} seconds.")
         return num_tuples_with_shapley_above_threshold
 
-    def calculate_with_smart_threshold(self, t, s_col, o_col, a_col, iterations=1):
+    def _calculate_with_smart_threshold_helper(self, t, s_col, o_col, a_col, iterations=1):
         """
         Calculates whether a tuple t is statistically significant using permutation testing.
         Corresponds to the permutation test shown in the provided pseudocode.
@@ -120,11 +121,11 @@ class LayeredShapleyValues:
         """
 
         # Step 1: Subset the dataset to only rows where A == t[A]
-        a_value = t[a_col]
+        a_value = t[2]
         D_a = self.dataset[self.dataset[a_col] == a_value].copy()
 
         # Step 2: Compute the actual test statistic M on the original data
-        true_score = self.calculate(s_col, o_col, a_col, data=D_a)
+        true_score = self.calculate(s_col, o_col, a_col, data=D_a.to_numpy().tolist())
 
         # Step 3–5: Perform m random permutations and compute statistics
         count = 0
@@ -132,7 +133,7 @@ class LayeredShapleyValues:
             D_i = D_a.copy()
             D_i[s_col] = np.random.permutation(D_i[s_col].values)
             D_i[o_col] = np.random.permutation(D_i[o_col].values)
-            permuted_score = self.calculate(s_col, o_col, a_col, data=D_i)
+            permuted_score = self.calculate(s_col, o_col, a_col, data=D_i.to_numpy().tolist())
             if permuted_score >= true_score:
                 count += 1
 
@@ -141,6 +142,32 @@ class LayeredShapleyValues:
 
         # Step 7–9: Return True if statistically significant
         return p < 0.05
+
+    def calculate_with_smart_threshold(self, s_col, o_col, a_col, data=None):
+        cols = [s_col, o_col]
+        if a_col is not None:
+            cols += [a_col]
+
+        if data is None:
+            self.dataset.replace(["NA", "N/A", ""], pd.NA, inplace=True)
+            self.dataset.dropna(inplace=True, subset=cols)
+            for col in cols:
+                self.dataset[col] = LabelEncoder().fit_transform(self.dataset[col])
+        self.dataset = self.dataset[cols]
+
+        start_time = time.time()  # Record start time
+        D = self.dataset.to_numpy().tolist() if data is None else data
+
+        num_tuples_with_shapley_above_threshold = 0
+        for t in D:
+            if self._calculate_with_smart_threshold_helper(t, s_col, o_col, a_col):
+                num_tuples_with_shapley_above_threshold += 1
+
+        end_time = time.time()  # Record end time
+        elapsed_time = end_time - start_time
+        print(f"Layered Shapley: {num_tuples_with_shapley_above_threshold} tuples flagged. "
+              f"Calculation took {elapsed_time:.3f} seconds.")
+        return num_tuples_with_shapley_above_threshold
 
 
 class ShapleyValues:

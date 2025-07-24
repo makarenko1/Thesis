@@ -350,6 +350,65 @@ def plot_anomalous_treatment_count_pmi_repair():
     plt.show()
 
 
+def plot_layered_shapley_values():
+    labels = [
+        "sex/income | education", "race/income | education", "education/education-num | sex"
+    ]
+
+    # Define attribute triplets
+    adult_attributes = [
+        ("sex", "income>50K", "education"),
+        ("race", "income>50K", "education"),
+        ("education", "education-num", "sex")
+    ]
+
+    all_paths = ["data/adult.csv"] * len(adult_attributes)
+
+    # Prepare result containers
+    mutual_information_scores = []
+    repair_scores = []
+    layered_shapley_values = []
+
+    # Compute metric values
+    for (s_col, o_col, a_col), path in zip(adult_attributes, all_paths):
+        mutual_information = MutualInformation(datapath=path).calculate(s_col, o_col, a_col)
+        repair_score = ProxyRepairMaxSat(datapath=path).calculate(s_col, o_col, a_col)
+        shapley_value = LayeredShapleyValues(datapath=path).calculate(s_col, o_col, a_col)
+
+        mutual_information_scores.append(mutual_information)
+        repair_scores.append(repair_score)
+        layered_shapley_values.append(shapley_value)
+
+    # Plot grouped bars
+    x = np.arange(len(labels))
+    width = 0.25  # width of each bar
+
+    fig, ax = plt.subplots(figsize=(14, 6))
+
+    bars1 = ax.bar(x - width, mutual_information_scores, width, label='Mutual Information', color='#b3cde3')
+    bars2 = ax.bar(x, repair_scores, width, label='Proxy Repair MaxSAT', color='#6497b1')
+    bars3 = ax.bar(x + width, layered_shapley_values, width, label='Layered Shapley', color='#005b96')
+
+    # Annotate bars with values
+    for bars in [bars1, bars2, bars3]:
+        for bar in bars:
+            height = bar.get_height()
+            ax.annotate(f'{height:.1f}', xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3), textcoords="offset points",
+                        ha='center', va='bottom', fontsize=8)
+
+    ax.set_ylabel("Score")
+    ax.set_title("Comparison of Fairness Metrics for Adult Dataset")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.legend()
+    ax.grid(False)
+
+    plt.tight_layout()
+    plt.savefig("plots/plot_layered_shapley_values_comparison_for_adult.png")
+    plt.show()
+
+
 if __name__ == "__main__":
     # ----------------Unconditional MI Proxies----------------
     # unconditional_mi_proxies()
@@ -421,4 +480,4 @@ if __name__ == "__main__":
     # plot_anomalous_treatment_count_pmi_repair()
 
     # -----------------Shapley Values------------------
-    LayeredShapleyValues(datapath="data/adult.csv").calculate("sex", "income>50K", "education")
+    plot_layered_shapley_values()
