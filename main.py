@@ -480,4 +480,5 @@ if __name__ == "__main__":
     # plot_anomalous_treatment_count_pmi_repair()
 
     # -----------------Shapley Values------------------
-    plot_layered_shapley_values()
+    MutualInformation(datapath="data/adult.csv").calculate("education", "education-num", "sex"
+                                                           )

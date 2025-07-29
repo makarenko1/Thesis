@@ -28,7 +28,52 @@ class LayeredShapleyValues:
         else:
             self.dataset = data
 
-    def calculate(self, s_col, o_col, a_col=None, alpha=10, beta=10, threshold=0.01, n=10, data=None):
+    def _calculate_for_one_tuple(self, D, t, s_col, o_col, a_col=None, alpha=10, beta=10, n=10):
+        """
+        Computes the Shapley value estimate for a single tuple using the Layered Shapley approximation.
+
+        Parameters:
+        -----------
+        D : list
+            The dataset as a list of tuples.
+        t : list
+            The tuple for which the Shapley value is estimated.
+        s_col : str
+            Sensitive attribute name.
+        o_col : str
+            Outcome attribute name.
+        a_col : str (optional)
+            Admissible/context attribute name.
+        alpha : int
+            Precision control parameter.
+        beta : int
+            Confidence control parameter.
+        n : int
+            Number of levels to sample over.
+
+        Returns:
+        --------
+        float
+            Estimated Shapley value for tuple t.
+        """
+        shapley_estimate_for_all_levels = 0
+        for k in range(1, n):
+            shapley_estimate_for_kth_level = 0
+            m_k = math.ceil(((2 ** 2) / (2 * (alpha ** 2) * (k ** 2))) *
+                            math.log(2 * n / beta, math.e))
+
+            for _ in range(m_k):
+                S = random.sample(D, k)
+                tvd_S_and_t = ProxyMutualInformationTVD(data=pd.DataFrame(S + [t], columns=[
+                    s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
+                tvd_S = ProxyMutualInformationTVD(data=pd.DataFrame(S, columns=[
+                    s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
+                shapley_estimate_for_kth_level += ((1 / m_k) * abs(tvd_S_and_t - tvd_S))
+
+            shapley_estimate_for_all_levels += (1 / n) * shapley_estimate_for_kth_level
+        return shapley_estimate_for_all_levels
+
+    def calculate(self, s_col, o_col, a_col=None, alpha=10, beta=10, n=10, threshold=0.01, data=None):
         """
         Calculates Shapley-based unfairness score according to the Layered Shapley Algorithm.
 
@@ -67,23 +112,8 @@ class LayeredShapleyValues:
         avg_shapley_values_per_tuple = defaultdict(lambda: 0)
 
         for t in D:
-            shapley_estimate_for_all_levels = 0
-            for k in range(1, n):
-                shapley_estimate_for_kth_level = 0
-                m_k = math.ceil(((2 ** 2) / (2 * (alpha ** 2) * (k ** 2))) *
-                                math.log(2 * n / beta, math.e))
-
-                for _ in range(m_k):
-                    S = random.sample(D, k)
-                    tvd_S_and_t = ProxyMutualInformationTVD(data=pd.DataFrame(S + [t], columns=[
-                        s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
-                    tvd_S = ProxyMutualInformationTVD(data=pd.DataFrame(S, columns=[
-                        s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
-                    shapley_estimate_for_kth_level += ((1 / m_k) * abs(tvd_S_and_t - tvd_S))
-
-                shapley_estimate_for_all_levels += (1 / n) * shapley_estimate_for_kth_level
-
-            avg_shapley_values_per_tuple[tuple(t)] = shapley_estimate_for_all_levels
+            avg_shapley_values_per_tuple[tuple(t)] = self._calculate_for_one_tuple(
+                D, t, s_col, o_col, a_col=a_col, alpha=alpha, beta=beta, n=n)
 
         num_tuples_with_shapley_above_threshold = 0
         for t in D:
@@ -96,7 +126,7 @@ class LayeredShapleyValues:
               f"with alpha {alpha} and beta {beta}. Calculation took {elapsed_time:.3f} seconds.")
         return num_tuples_with_shapley_above_threshold
 
-    def _calculate_with_smart_threshold_helper(self, t, s_col, o_col, a_col, iterations=1):
+    def _calculate_with_smart_threshold_helper(self, t, s_col, o_col, a_col, alpha=10, beta=10, n=10, iterations=1):
         """
         Calculates whether a tuple t is statistically significant using permutation testing.
         Corresponds to the permutation test shown in the provided pseudocode.
@@ -123,17 +153,21 @@ class LayeredShapleyValues:
         # Step 1: Subset the dataset to only rows where A == t[A]
         a_value = t[2]
         D_a = self.dataset[self.dataset[a_col] == a_value].copy()
+        D_a = D_a.to_numpy().tolist()
 
-        # Step 2: Compute the actual test statistic M on the original data
-        true_score = self.calculate(s_col, o_col, a_col, data=D_a.to_numpy().tolist())
+        # Step 2: Compute the actual test statistic on the original data
+        true_score = self._calculate_for_one_tuple(D_a, t, s_col, o_col, a_col=a_col, alpha=alpha, beta=beta, n=n)
 
-        # Step 3–5: Perform m random permutations and compute statistics
+        # Step 3–5: Perform random permutations and compute statistics
         count = 0
         for _ in range(iterations):
             D_i = D_a.copy()
             D_i[s_col] = np.random.permutation(D_i[s_col].values)
             D_i[o_col] = np.random.permutation(D_i[o_col].values)
-            permuted_score = self.calculate(s_col, o_col, a_col, data=D_i.to_numpy().tolist())
+            D_i = D_i.to_numpy().tolist()
+
+            permuted_score =  self._calculate_for_one_tuple(D_i, t, s_col, o_col, a_col=a_col, alpha=alpha,
+                                                            beta=beta, n=n)
             if permuted_score >= true_score:
                 count += 1
 
@@ -144,6 +178,26 @@ class LayeredShapleyValues:
         return p < 0.05
 
     def calculate_with_smart_threshold(self, s_col, o_col, a_col, data=None):
+        """
+        Computes the number of tuples that are statistically significant based on Shapley value
+        using permutation-based p-value thresholding.
+
+        Parameters:
+        -----------
+        s_col : str
+            Sensitive attribute.
+        o_col : str
+            Outcome attribute.
+        a_col : str
+            Admissible attribute.
+        data : pd.DataFrame (optional)
+            Optional dataset override.
+
+        Returns:
+        --------
+        int
+            Count of tuples considered statistically significant.
+        """
         cols = [s_col, o_col]
         if a_col is not None:
             cols += [a_col]
