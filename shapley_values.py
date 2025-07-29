@@ -59,7 +59,6 @@ class LayeredShapleyValues:
         shapley_estimate_for_all_levels = 0
         for _ in range(1, n):
             k = random.randrange(1, len(D))  # randomize the level size
-            print(k)
             shapley_estimate_for_kth_level = 0
             m_k = math.ceil(((2 ** 2) / (2 * (alpha ** 2) * (k ** 2))) *
                             math.log(2 * n / beta, math.e))

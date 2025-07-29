@@ -1,7 +1,9 @@
-numpy~=2.3.2
-scipy~=1.16.1
-pandas~=2.3.1
-networkx~=3.5
-matplotlib~=3.10.3
+numpy
+scipy
+pandas
+networkx
+matplotlib
 scikit-learn
-disjoint_set~=0.8.0
+disjoint_set
+jax
+z3-solver
