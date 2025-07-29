@@ -28,7 +28,7 @@ class LayeredShapleyValues:
         else:
             self.dataset = data
 
-    def _calculate_for_one_tuple(self, D, t, s_col, o_col, a_col=None, alpha=10, beta=10, n=10):
+    def _calculate_for_one_tuple(self, D, t, full_tvd, s_col, o_col, a_col=None, alpha=10, beta=10, n=10):
         """
         Computes the Shapley value estimate for a single tuple using the Layered Shapley approximation.
 
@@ -65,9 +65,9 @@ class LayeredShapleyValues:
 
             for _ in range(m_k):
                 S = random.sample(D, k)
-                tvd_S_and_t = ProxyMutualInformationTVD(data=pd.DataFrame(S + [t], columns=[
+                tvd_S_and_t = ProxyMutualInformationTVD(data=pd.DataFrame(set(D) - {S + [t]}, columns=[
                     s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
-                tvd_S = ProxyMutualInformationTVD(data=pd.DataFrame(S, columns=[
+                tvd_S = ProxyMutualInformationTVD(data=pd.DataFrame(set(D) - {S}, columns=[
                     s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
                 shapley_estimate_for_kth_level += ((1 / m_k) * abs(tvd_S_and_t - tvd_S))
 
@@ -110,11 +110,13 @@ class LayeredShapleyValues:
         start_time = time.time()  # Record start time
 
         D = self.dataset[cols].to_numpy().tolist() if data is None else data
+        full_tvd = ProxyMutualInformationTVD(data=pd.DataFrame(D, columns=[s_col, o_col, a_col])).calculate(
+            s_col, o_col, a_col)
         avg_shapley_values_per_tuple = defaultdict(lambda: 0)
 
         for t in D:
             avg_shapley_values_per_tuple[tuple(t)] = self._calculate_for_one_tuple(
-                D, t, s_col, o_col, a_col=a_col, alpha=alpha, beta=beta, n=n)
+                D, t, full_tvd, s_col, o_col, a_col=a_col, alpha=alpha, beta=beta, n=n)
 
         num_tuples_with_shapley_above_threshold = 0
         for t in D:
