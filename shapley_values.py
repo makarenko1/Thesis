@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 
+from proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
 from proxy_mutual_information_tvd import ProxyMutualInformationTVD
 
 
@@ -65,11 +66,13 @@ class LayeredShapleyValues:
 
             for _ in range(m_k):
                 S = random.sample(D, k)
-                tvd_S_and_t = ProxyMutualInformationTVD(data=pd.DataFrame(set(D) - {S + [t]}, columns=[
+                D_minus_S = set(D) - set(S)
+                D_minus_S_minus_t = D_minus_S - {t}
+                tvd_S_and_t = ProxyMutualInformationTVD(data=pd.DataFrame(D_minus_S_minus_t, columns=[
                     s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
-                tvd_S = ProxyMutualInformationTVD(data=pd.DataFrame(set(D) - {S}, columns=[
+                tvd_S = ProxyMutualInformationTVD(data=pd.DataFrame(D_minus_S, columns=[
                     s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
-                shapley_estimate_for_kth_level += ((1 / m_k) * abs(tvd_S_and_t - tvd_S))
+                shapley_estimate_for_kth_level += ((1 / m_k) * abs(abs(full_tvd - tvd_S_and_t) - abs(full_tvd - tvd_S)))
 
             shapley_estimate_for_all_levels += (1 / n) * shapley_estimate_for_kth_level
         return shapley_estimate_for_all_levels
@@ -107,21 +110,25 @@ class LayeredShapleyValues:
                 self.dataset[col] = LabelEncoder().fit_transform(self.dataset[col])
         self.dataset = self.dataset[cols]
 
+        D = self.dataset[cols].to_numpy().tolist() if data is None else data
+        for i in range(len(D)):
+            D[i] = tuple(D[i])
+
         start_time = time.time()  # Record start time
 
-        D = self.dataset[cols].to_numpy().tolist() if data is None else data
-        full_tvd = ProxyMutualInformationTVD(data=pd.DataFrame(D, columns=[s_col, o_col, a_col])).calculate(
+        D_shortened = list(set(D))
+        full_tvd = ProxyMutualInformationTVD(data=pd.DataFrame(D_shortened, columns=[s_col, o_col, a_col])).calculate(
             s_col, o_col, a_col)
         avg_shapley_values_per_tuple = defaultdict(lambda: 0)
 
-        for t in D:
+        for t in D_shortened:
             avg_shapley_values_per_tuple[tuple(t)] = self._calculate_for_one_tuple(
-                D, t, full_tvd, s_col, o_col, a_col=a_col, alpha=alpha, beta=beta, n=n)
+                D_shortened, t, full_tvd, s_col, o_col, a_col=a_col, alpha=alpha, beta=beta, n=n)
 
         num_tuples_with_shapley_above_threshold = 0
-        for t in D:
-            if avg_shapley_values_per_tuple[tuple(t)] >= threshold:
-                num_tuples_with_shapley_above_threshold += 1
+        for t in D_shortened:
+            if avg_shapley_values_per_tuple[t] >= threshold:
+                num_tuples_with_shapley_above_threshold += D.count(t)
 
         end_time = time.time()  # Record end time
         elapsed_time = end_time - start_time
@@ -129,7 +136,7 @@ class LayeredShapleyValues:
               f"with alpha {alpha} and beta {beta}. Calculation took {elapsed_time:.3f} seconds.")
         return num_tuples_with_shapley_above_threshold
 
-    def _calculate_with_smart_threshold_helper(self, t, s_col, o_col, a_col, alpha=10, beta=10, n=10, iterations=1):
+    def _calculate_with_smart_threshold_helper(self, D, t, full_tvd, s_col, o_col, a_col, alpha=10, beta=10, n=10, iterations=1):
         """
         Calculates whether a tuple t is statistically significant using permutation testing.
         Corresponds to the permutation test shown in the provided pseudocode.
@@ -154,25 +161,30 @@ class LayeredShapleyValues:
         """
 
         # Step 1: Subset the dataset to only rows where A == t[A]
-        a_value = t[2]
-        D_a = self.dataset[self.dataset[a_col] == a_value].copy()
-        D_a = D_a.to_numpy().tolist()
+        # a_value = t[2]
+        # D_a = []
+        # for i in range(len(D)):
+        #     if D[i][2] == a_value:
+        #         D_a.append(D[i])
 
         # Step 2: Compute the actual test statistic on the original data
-        true_score = self._calculate_for_one_tuple(D_a, t, s_col, o_col, a_col=a_col, alpha=alpha, beta=beta, n=n)
+        true_score = self._calculate_for_one_tuple(D, t, full_tvd, s_col, o_col, a_col=a_col, alpha=alpha, beta=beta, n=n)
 
         # Step 3–5: Perform random permutations and compute statistics
         count = 0
         for _ in range(iterations):
-            D_i = D_a.copy()
+            D_i = self.dataset.copy()
             D_i[s_col] = np.random.permutation(D_i[s_col].values)
             D_i[o_col] = np.random.permutation(D_i[o_col].values)
             D_i = D_i.to_numpy().tolist()
+            for i in range(len(D_i)):
+                D_i[i] = tuple(D_i[i])
+            D_i = list(set(D_i))
 
-            permuted_score =  self._calculate_for_one_tuple(D_i, t, s_col, o_col, a_col=a_col, alpha=alpha,
+            permuted_score =  self._calculate_for_one_tuple(D_i, t, full_tvd, s_col, o_col, a_col=a_col, alpha=alpha,
                                                             beta=beta, n=n)
             if permuted_score >= true_score:
-                count += 1
+                count += D.count(t)
 
         # Step 6: Compute p-value
         p = (1 + count) / (1 + iterations)
@@ -212,13 +224,20 @@ class LayeredShapleyValues:
                 self.dataset[col] = LabelEncoder().fit_transform(self.dataset[col])
         self.dataset = self.dataset[cols]
 
+        D = self.dataset[cols].to_numpy().tolist() if data is None else data
+        for i in range(len(D)):
+            D[i] = tuple(D[i])
+
         start_time = time.time()  # Record start time
-        D = self.dataset.to_numpy().tolist() if data is None else data
+
+        D_shortened = list(set(D))
+        full_tvd = ProxyMutualInformationTVD(data=pd.DataFrame(D_shortened, columns=[s_col, o_col, a_col])).calculate(
+            s_col, o_col, a_col)
 
         num_tuples_with_shapley_above_threshold = 0
-        for t in D:
-            if self._calculate_with_smart_threshold_helper(t, s_col, o_col, a_col):
-                num_tuples_with_shapley_above_threshold += 1
+        for t in D_shortened:
+            if self._calculate_with_smart_threshold_helper(D_shortened, t, full_tvd, s_col, o_col, a_col):
+                num_tuples_with_shapley_above_threshold += D.count(t)
 
         end_time = time.time()  # Record end time
         elapsed_time = end_time - start_time

@@ -64,7 +64,7 @@ class MutualInformation:
         elapsed_time = end_time - start_time
         print(f"Regular Mutual Information for dependency '{s_col}' ⫫ '{o_col}'" +
               (f" | {a_col}" if a_col is not None else "") +
-              f"is: {mi:.4f}. Calculation took {elapsed_time:.3f} seconds.")
+              f" is: {mi:.4f}. Calculation took {elapsed_time:.3f} seconds.")
         return round(mi, 4)
 
     def _getI(self, s_col_values, o_col_values, a_col_values=None):
