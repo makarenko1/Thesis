@@ -373,7 +373,7 @@ def plot_layered_shapley_values():
     for (s_col, o_col, a_col), path in zip(adult_attributes, all_paths):
         mutual_information = MutualInformation(datapath=path).calculate(s_col, o_col, a_col)
         repair_score = ProxyRepairMaxSat(datapath=path).calculate(s_col, o_col, a_col)
-        shapley_value = LayeredShapleyValues(datapath=path).calculate_with_smart_threshold(s_col, o_col, a_col)
+        shapley_value = LayeredShapleyValues(datapath=path).calculate(s_col, o_col, a_col)
 
         mutual_information_scores.append(mutual_information)
         repair_scores.append(repair_score)
@@ -405,7 +405,7 @@ def plot_layered_shapley_values():
     ax.grid(False)
 
     plt.tight_layout()
-    plt.savefig("plots/plot_layered_shapley_values_comparison_for_adult.png")
+    plt.savefig("plots/plot_layered_shapley_values_comparison_for_adult_n_1000.png")
     plt.show()
 
 

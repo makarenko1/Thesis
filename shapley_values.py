@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 
+from mutual_information import MutualInformation
 from proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
 from proxy_mutual_information_tvd import ProxyMutualInformationTVD
 
@@ -29,7 +30,7 @@ class LayeredShapleyValues:
         else:
             self.dataset = data
 
-    def _calculate_for_one_tuple(self, D, t, full_tvd, s_col, o_col, a_col=None, alpha=10, beta=10, n=10):
+    def _calculate_for_one_tuple(self, D, t, full_tvd, s_col, o_col, a_col=None, alpha=10, beta=10, n=1000):
         """
         Computes the Shapley value estimate for a single tuple using the Layered Shapley approximation.
 
@@ -77,7 +78,7 @@ class LayeredShapleyValues:
             shapley_estimate_for_all_levels += (1 / n) * shapley_estimate_for_kth_level
         return shapley_estimate_for_all_levels
 
-    def calculate(self, s_col, o_col, a_col=None, alpha=10, beta=10, n=10, threshold=0.01, data=None):
+    def calculate(self, s_col, o_col, a_col=None, alpha=10, beta=10, n=1000, threshold=0.01, data=None):
         """
         Calculates Shapley-based unfairness score according to the Layered Shapley Algorithm.
 
@@ -113,17 +114,17 @@ class LayeredShapleyValues:
         D = self.dataset[cols].to_numpy().tolist() if data is None else data
         for i in range(len(D)):
             D[i] = tuple(D[i])
+        D_shortened = list(set(D))
 
         start_time = time.time()  # Record start time
 
-        D_shortened = list(set(D))
-        full_tvd = ProxyMutualInformationTVD(data=pd.DataFrame(D_shortened, columns=[s_col, o_col, a_col])).calculate(
+        full_tvd = ProxyMutualInformationTVD(data=pd.DataFrame(D, columns=[s_col, o_col, a_col])).calculate(
             s_col, o_col, a_col)
         avg_shapley_values_per_tuple = defaultdict(lambda: 0)
 
         for t in D_shortened:
             avg_shapley_values_per_tuple[tuple(t)] = self._calculate_for_one_tuple(
-                D_shortened, t, full_tvd, s_col, o_col, a_col=a_col, alpha=alpha, beta=beta, n=n)
+                D, t, full_tvd, s_col, o_col, a_col=a_col, alpha=alpha, beta=beta, n=n)
 
         num_tuples_with_shapley_above_threshold = 0
         for t in D_shortened:
@@ -136,7 +137,7 @@ class LayeredShapleyValues:
               f"with alpha {alpha} and beta {beta}. Calculation took {elapsed_time:.3f} seconds.")
         return num_tuples_with_shapley_above_threshold
 
-    def _calculate_with_smart_threshold_helper(self, D, t, full_tvd, s_col, o_col, a_col, alpha=10, beta=10, n=10, iterations=1):
+    def _calculate_with_smart_threshold_helper(self, D, t, full_tvd, s_col, o_col, a_col, alpha=10, beta=10, n=1000, iterations=1):
         """
         Calculates whether a tuple t is statistically significant using permutation testing.
         Corresponds to the permutation test shown in the provided pseudocode.
@@ -231,12 +232,12 @@ class LayeredShapleyValues:
         start_time = time.time()  # Record start time
 
         D_shortened = list(set(D))
-        full_tvd = ProxyMutualInformationTVD(data=pd.DataFrame(D_shortened, columns=[s_col, o_col, a_col])).calculate(
+        full_tvd = ProxyMutualInformationTVD(data=pd.DataFrame(D, columns=[s_col, o_col, a_col])).calculate(
             s_col, o_col, a_col)
 
         num_tuples_with_shapley_above_threshold = 0
         for t in D_shortened:
-            if self._calculate_with_smart_threshold_helper(D_shortened, t, full_tvd, s_col, o_col, a_col):
+            if self._calculate_with_smart_threshold_helper(D, t, full_tvd, s_col, o_col, a_col):
                 num_tuples_with_shapley_above_threshold += D.count(t)
 
         end_time = time.time()  # Record end time
@@ -263,7 +264,7 @@ class ShapleyValues:
         else:
             self.dataset = data
 
-    def calculate(self, s_col, o_col, a_col=None, threshold=0.01, sample_size=10, times=10):
+    def calculate(self, s_col, o_col, a_col=None, threshold=0.01, sample_size=100, times=100, data=None):
         """
         Calculates Shapley-based unfairness score.
 
@@ -293,13 +294,16 @@ class ShapleyValues:
         for col in cols:
             self.dataset[col] = LabelEncoder().fit_transform(self.dataset[col])
 
+        D = self.dataset[cols].to_numpy().tolist() if data is None else data
+        for i in range(len(D)):
+            D[i] = tuple(D[i])
+        D_shortened = list(set(D))
+
         start_time = time.time()  # Record start time
 
-        D = self.dataset[cols].to_numpy().tolist()
         avg_shapley_values_per_tuple = defaultdict(lambda: 0)
-
         for _ in range(times):
-            for t in D:
+            for t in D_shortened:
                 D_tag = copy.deepcopy(D)
                 D_tag.remove(t)
 
@@ -310,12 +314,12 @@ class ShapleyValues:
                     s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
 
                 shapley_value = abs(tvd_S_and_t - tvd_S)
-                avg_shapley_values_per_tuple[tuple(t)] += (shapley_value / times)
+                avg_shapley_values_per_tuple[t] += (shapley_value / times)
 
         num_tuples_with_shapley_above_threshold = 0
-        for t in D:
-            if avg_shapley_values_per_tuple[tuple(t)] >= threshold:
-                num_tuples_with_shapley_above_threshold += 1
+        for t in D_shortened:
+            if avg_shapley_values_per_tuple[t] >= threshold:
+                num_tuples_with_shapley_above_threshold += D.count(t)
 
         end_time = time.time()  # Record end time
         elapsed_time = end_time - start_time
