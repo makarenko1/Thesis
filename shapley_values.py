@@ -256,7 +256,7 @@ class LayeredShapleyValues:
         for t in candidates:
             avg_shapley_value_per_tuple[t] = self._calculate_for_one_tuple(
                 D, t, full_tvd, s_col, o_col, a_col=a_col, alpha=alpha, beta=beta, n=n)
-        num_tuples_with_shapley_above_threshold = self._get_flagged_tuples(avg_shapley_value_per_tuple)
+        num_tuples_with_shapley_above_threshold = self._get_flagged_tuples(D, avg_shapley_value_per_tuple)
 
         end_time = time.time()  # Record end time
         elapsed_time = end_time - start_time
