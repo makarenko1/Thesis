@@ -170,12 +170,14 @@ class LayeredShapleyValues:
         return shapley_estimate_for_all_levels
 
     @staticmethod
-    def _get_flagged_tuples(avg_shapley_value_per_tuple):
+    def _get_flagged_tuples(D, avg_shapley_value_per_tuple):
         """
         Select tuples that comprise the upper half of the total Shapley “mass”.
 
         Parameters
         ----------
+        D : list[tuple]
+            Dataset as a list of tuples (S, O, A).
         avg_shapley_value_per_tuple : dict[tuple, float]
             Mapping from tuple -> estimated Shapley value.
 
@@ -187,10 +189,7 @@ class LayeredShapleyValues:
 
         Notes
         -----
-        This is a robust cutoff for hyperbola-like tails. If you prefer to also
-        get the numeric threshold or the selected tuples, change the return to:
-            `return thr, [items[i][0] for i in range(k + 1)]`
-        where `thr` is the value at the cutoff index.
+        This is a robust cutoff for hyperbola-like tails.
         """
         items = list(avg_shapley_value_per_tuple.items())
         # sort by value desc
@@ -205,8 +204,10 @@ class LayeredShapleyValues:
         k = int(np.searchsorted(cum, 0.5 * total))  # index of half-mass cutoff
         thr = float(vals[k])  # threshold value on y-axis
 
-        selected = [items[i][0] for i in range(k + 1)]
-        return len(selected)
+        num_flagged_tuples = 0
+        for i in range(k + 1):
+            num_flagged_tuples += D.count(items[i][0])
+        return num_flagged_tuples
 
     def calculate(self, s_col, o_col, a_col=None, alpha=1, beta=2.5 , n=10, data=None):
         """
