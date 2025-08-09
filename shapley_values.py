@@ -155,7 +155,7 @@ class LayeredShapleyValues:
             for _ in range(m_k):
                 S = random.sample(D, k)
                 D_minus_S = self._remove_multiset(D, S)
-                D_minus_S_minus_t = D_minus_S
+                D_minus_S_minus_t = D_minus_S.copy()
                 try:
                     D_minus_S_minus_t.remove(t)
                 except ValueError:
@@ -198,11 +198,10 @@ class LayeredShapleyValues:
 
         total = vals.sum()
         if total <= 0:
-            return 0.0, []  # nothing to select
+            return 0  # nothing to select
 
         cum = np.cumsum(vals)
         k = int(np.searchsorted(cum, 0.5 * total))  # index of half-mass cutoff
-        thr = float(vals[k])  # threshold value on y-axis
 
         num_flagged_tuples = 0
         for i in range(k + 1):
