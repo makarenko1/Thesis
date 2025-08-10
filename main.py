@@ -352,7 +352,9 @@ def plot_anomalous_treatment_count_pmi_repair():
 
 def plot_layered_shapley_values():
     labels = [
-        "sex/income | education", "race/income | education", "education/education-num | sex"
+        "sex/income | education", "race/income | education", "education/education-num | sex",
+        "Country/EdLevel | Age", "Country/DevType | Age", "Country/SurveyLength | Age", "Country/SOVisitFreq | Age",
+        "race/charge_desc | age", "race/score_text | age", "race/sex | age"
     ]
 
     # Define attribute triplets
@@ -361,8 +363,22 @@ def plot_layered_shapley_values():
         ("race", "income>50K", "education"),
         ("education", "education-num", "sex")
     ]
+    stackoverflow_attributes = [
+        ("Country", "EdLevel", "Age"),
+        ("Country", "DevType", "Age"),
+        ("Country", "SurveyLength", "Age"),
+        ("Country", "SOVisitFreq", "Age")
+    ]
+    compas_attributes = [
+        ("race", "c_charge_desc", "age"),
+        ("race", "score_text", "age"),
+        ("race", "sex", "age")
+    ]
 
-    all_paths = ["data/adult.csv"] * len(adult_attributes)
+    all_attributes = adult_attributes + stackoverflow_attributes + compas_attributes
+    all_paths = ["data/adult.csv"] * len(adult_attributes) + \
+                ["data/stackoverflow.csv"] * len(stackoverflow_attributes) + \
+                ["data/compas.csv"] * len(compas_attributes)
 
     # Prepare result containers
     mutual_information_scores = []
@@ -370,7 +386,7 @@ def plot_layered_shapley_values():
     layered_shapley_values = []
 
     # Compute metric values
-    for (s_col, o_col, a_col), path in zip(adult_attributes, all_paths):
+    for (s_col, o_col, a_col), path in zip(all_attributes, all_paths):
         mutual_information = MutualInformation(datapath=path).calculate(s_col, o_col, a_col)
         repair_score = ProxyRepairMaxSat(datapath=path).calculate(s_col, o_col, a_col)
         shapley_value = LayeredShapleyValues(datapath=path).calculate(s_col, o_col, a_col)
@@ -379,33 +395,45 @@ def plot_layered_shapley_values():
         repair_scores.append(repair_score)
         layered_shapley_values.append(shapley_value)
 
-    # Plot grouped bars
-    x = np.arange(len(labels))
-    width = 0.25  # width of each bar
+    # Define dataset colors
+    dataset_colors = {
+        "data/adult.csv": "#1f77b4",         # blue
+        "data/stackoverflow.csv": "#ff7f0e", # orange
+        "data/compas.csv": "#2ca02c"         # green
+    }
+    colors = [dataset_colors[path] for path in all_paths]
 
-    fig, ax = plt.subplots(figsize=(14, 6))
+    # Plotting
+    fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
 
-    bars1 = ax.bar(x - width, mutual_information_scores, width, label='Mutual Information', color='#b3cde3')
-    bars2 = ax.bar(x, repair_scores, width, label='Proxy Repair MaxSAT', color='#6497b1')
-    bars3 = ax.bar(x + width, layered_shapley_values, width, label='Layered Shapley', color='#005b96')
+    # MI subplot
+    axes[0].bar(labels, mutual_information_scores, color=colors)
+    axes[0].set_title("Mutual Information")
+    axes[0].set_ylabel("MI Score")
 
-    # Annotate bars with values
-    for bars in [bars1, bars2, bars3]:
-        for bar in bars:
-            height = bar.get_height()
-            ax.annotate(f'{height:.1f}', xy=(bar.get_x() + bar.get_width() / 2, height),
-                        xytext=(0, 3), textcoords="offset points",
-                        ha='center', va='bottom', fontsize=8)
+    # Repair subplot
+    axes[1].bar(labels, repair_scores, color=colors)
+    axes[1].set_title("Repair Score")
+    axes[1].set_ylabel("Repair")
 
-    ax.set_ylabel("Score")
-    ax.set_title("Comparison of Fairness Metrics for Adult Dataset")
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=45, ha="right")
-    ax.legend()
-    ax.grid(False)
+    # Layered Shapley subplot
+    axes[2].bar(labels, layered_shapley_values, color=colors)
+    axes[2].set_title("Layered Shapley Value")
+    axes[2].set_ylabel("Shapley Value")
+    axes[2].set_xticks(np.arange(len(labels)))
+    axes[2].set_xticklabels(labels, rotation=45, ha='right')
+
+    # Add legend manually
+    legend_labels = {
+        "data/adult.csv": "Adult",
+        "data/stackoverflow.csv": "StackOverflow",
+        "data/compas.csv": "Compas"
+    }
+    handles = [plt.Rectangle((0,0),1,1, color=dataset_colors[k]) for k in dataset_colors]
+    axes[0].legend(handles, legend_labels.values(), loc="upper right")
 
     plt.tight_layout()
-    plt.savefig("plots/plot_layered_shapley_values_comparison_for_adult_n_1000.png")
+    plt.savefig("plots/plot_layered_shapley_values_comparison_n_10.png")
     plt.show()
 
 
