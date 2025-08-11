@@ -3,4 +3,4 @@ __pycache__/
 literature/
 *.cpp
 stackoverflow.csv
-compas-scores.csv
+compas.csv

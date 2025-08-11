@@ -63,7 +63,7 @@ class LayeredShapleyValues:
     @staticmethod
     def _get_relevant_tuples(X, k=1000):
         """
-            Build a fast, TVD-free proxy to shortlist candidate tuples.
+            Fast, TVD-free proxy to shortlist candidate tuples.
 
             Parameters
             ----------

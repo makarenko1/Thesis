@@ -134,7 +134,7 @@ def unconditional_mi_proxies():
         "data/domains/compas/compas-domain-race-score_text.json",
         "data/domains/compas/compas-domain-race-sex.json"
     ]
-    calculate_mi_proxies("data/compas-scores.csv", compas_attributes, compas_domains, "Compas")
+    calculate_mi_proxies("data/compas.csv", compas_attributes, compas_domains, "Compas")
     plot_mi_proxies("plots/plot_mutual_information_colored_by_dataset.png")
 
 
@@ -188,7 +188,7 @@ def conditional_mi_proxies():
         "data/domains/compas/compas-domain-race-score_text-age.json",
         "data/domains/compas/compas-domain-race-sex-age.json"
     ]
-    calculate_mi_proxies("data/compas-scores.csv", compas_attributes, compas_domains, "Compas")
+    calculate_mi_proxies("data/compas.csv", compas_attributes, compas_domains, "Compas")
     plot_mi_proxies("plots/plot_conditional_mutual_information_colored_by_dataset.png")
 
 
@@ -388,7 +388,8 @@ def plot_layered_shapley_values():
     # Compute metric values
     for (s_col, o_col, a_col), path in zip(all_attributes, all_paths):
         mutual_information = MutualInformation(datapath=path).calculate(s_col, o_col, a_col)
-        repair_score = ProxyRepairMaxSat(datapath=path).calculate(s_col, o_col, a_col)
+        # repair_score = ProxyRepairMaxSat(datapath=path).calculate(s_col, o_col, a_col)
+        repair_score = 0
         shapley_value = LayeredShapleyValues(datapath=path).calculate(s_col, o_col, a_col)
 
         mutual_information_scores.append(mutual_information)
@@ -462,10 +463,10 @@ if __name__ == "__main__":
     # "SOVisitFreq", "Age"))
     # print()
     #
-    # maxsat_results.append(ProxyRepairMaxSat(datapath="data/compas-scores.csv").calculate("race", "c_charge_desc",
+    # maxsat_results.append(ProxyRepairMaxSat(datapath="data/compas.csv").calculate("race", "c_charge_desc",
     # "age"))
-    # maxsat_results.append(ProxyRepairMaxSat(datapath="data/compas-scores.csv").calculate("race", "score_text", "age"))
-    # maxsat_results.append(ProxyRepairMaxSat(datapath="data/compas-scores.csv").calculate("race", "sex", "age"))
+    # maxsat_results.append(ProxyRepairMaxSat(datapath="data/compas.csv").calculate("race", "score_text", "age"))
+    # maxsat_results.append(ProxyRepairMaxSat(datapath="data/compas.csv").calculate("race", "sex", "age"))
     #
     # maxsat_results.append(ProxyRepairMaxSat(datapath='data/toy_example.csv').calculate("A", "B", "C"))
 
