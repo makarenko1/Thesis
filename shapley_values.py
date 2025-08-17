@@ -83,39 +83,39 @@ class LayeredShapleyValues:
             The proxy uses residuals R_{s,o,a} = |P(S,O|a) - P(S|a)P(O|a)| scaled by
             1/N_a to favor impactful cells in smaller groups.
             """
-        X = np.array(X, dtype=np.int64)
-        # X is an int ndarray [N, 3] with columns (S,O,A)
+        X = np.asarray(X, dtype=np.int64)
         S, O, A = X[:, 0], X[:, 1], X[:, 2]
         nS, nO, nA = S.max() + 1, O.max() + 1, A.max() + 1
-        N = len(X)
 
         flat = A * (nS * nO) + S * nO + O
-        C = np.bincount(flat, minlength=nA * nS * nO).reshape(nA, nS, nO).astype(float)
+        C = np.bincount(flat, minlength=nA * nS * nO).reshape(nA, nS, nO).astype(np.int64)
         Na = C.sum(axis=(1, 2))  # [nA]
-        mask = Na > 0
+        Rs = C.sum(axis=2)  # [nA,nS]  row sums r_s
+        Co = C.sum(axis=1)  # [nA,nO]  col sums c_o
 
-        Pso = np.zeros_like(C)
-        Pso[mask] = C[mask] / Na[mask, None, None]
-        Ps = Pso.sum(axis=2, keepdims=True)  # [nA,nS,1]
-        Po = Pso.sum(axis=1, keepdims=True)  # [nA,1,nO]
-        R = np.abs(Pso - Ps * Po)  # residuals
+        # indices of cells present
+        a_idx, s_idx, o_idx = np.nonzero(C)
+        c = C[a_idx, s_idx, o_idx].astype(np.float64)
+        na = Na[a_idx].astype(np.float64)
+        rs = Rs[a_idx, s_idx].astype(np.float64)
+        co = Co[a_idx, o_idx].astype(np.float64)
 
-        # proxy score per cell; avoid div0 for empty groups
-        proxy = np.zeros_like(C)
-        proxy[mask] = R[mask] / Na[mask, None, None]
+        # current residual and scaled proxy
+        R = np.abs((c * na - rs * co) / (na * na))
+        P = R / na
 
-        # map back to unique tuples and scores
-        tuples, scores = [], []
-        for a in range(nA):
-            if Na[a] == 0: continue
-            idx = np.argwhere(C[a] > 0)  # cells present in data
-            for s, o in idx:
-                tuples.append((int(s), int(o), int(a)))
-                scores.append(float(proxy[a, s, o]))
-        scores = np.array(scores)
+        # post-removal values (valid only when na>=2)
+        mask = na >= 2
+        c1, rs1, co1, na1 = c[mask] - 1.0, rs[mask] - 1.0, co[mask] - 1.0, na[mask] - 1.0
+        R1 = np.abs(((c1 * na1) - (rs1 * co1)) / (na1 * na1))
+        P1 = R1 / na1
+        delta = np.zeros_like(P)
+        delta[mask] = P1 - P[mask]
 
+        # map back to tuples and rank by -delta (largest drop in proxy when removed)
+        tuples = list(zip(s_idx.tolist(), o_idx.tolist(), a_idx.tolist()))
+        order = np.argsort(-delta)  # biggest positive delta first
         K = min(k, len(tuples))
-        order = np.argsort(-scores)
         return [tuples[i] for i in order[:K]]
 
     def _calculate_for_one_tuple(self, D, t, full_tvd, s_col, o_col, a_col=None, alpha=10, beta=10, n=1000):
