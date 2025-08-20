@@ -170,9 +170,9 @@ class LayeredShapleyValues:
         return shapley_estimate_for_all_levels
 
     @staticmethod
-    def _get_flagged_tuples(D, avg_shapley_value_per_tuple):
+    def _get_auc(D, avg_shapley_value_per_tuple):
         """
-        Select tuples that comprise the upper half of the total Shapley “mass”.
+        Compute the area under the cumulative Shapley mass curve (AUC).
 
         Parameters
         ----------
@@ -183,30 +183,30 @@ class LayeredShapleyValues:
 
         Returns
         -------
-        int
-            The number of tuples needed (from the top, after sorting by value
-            descending) to accumulate at least 50% of the total Shapley sum.
-
-        Notes
-        -----
-        This is a robust cutoff for hyperbola-like tails.
+        float
+            AUC score in [0,1], measuring how concentrated the Shapley mass is.
         """
         items = list(avg_shapley_value_per_tuple.items())
-        # sort by value desc
+        # sort tuples by shapley value descending
         items.sort(key=lambda kv: kv[1], reverse=True)
+
+        # collect multiplicities (how many times tuple occurs in D)
+        counts = np.array([D.count(t) for t, _ in items], dtype=float)
         vals = np.array([v for _, v in items], dtype=float)
 
-        total = vals.sum()
+        # weight shapley by multiplicity
+        weighted_vals = counts * vals
+        total = weighted_vals.sum()
         if total <= 0:
-            return 0  # nothing to select
+            return 0.0
 
-        cum = np.cumsum(vals)
-        k = int(np.searchsorted(cum, 0.5 * total))  # index of half-mass cutoff
+        # cumulative fraction of tuples (x-axis) and cumulative mass (y-axis)
+        cum_mass = np.cumsum(weighted_vals) / total
+        frac_tuples = np.cumsum(counts) / counts.sum()
 
-        num_flagged_tuples = 0
-        for i in range(k + 1):
-            num_flagged_tuples += D.count(items[i][0])
-        return num_flagged_tuples
+        # trapezoidal integration for AUC
+        auc = np.trapezoid(cum_mass, frac_tuples)
+        return auc
 
     def calculate(self, s_col, o_col, a_col=None, alpha=1, beta=2.5 , n=10, data=None):
         """
@@ -255,13 +255,13 @@ class LayeredShapleyValues:
         for t in candidates:
             avg_shapley_value_per_tuple[t] = self._calculate_for_one_tuple(
                 D, t, full_tvd, s_col, o_col, a_col=a_col, alpha=alpha, beta=beta, n=n)
-        num_tuples_with_shapley_above_threshold = self._get_flagged_tuples(D, avg_shapley_value_per_tuple)
+        auc = self._get_auc(D, avg_shapley_value_per_tuple)
 
         end_time = time.time()  # Record end time
         elapsed_time = end_time - start_time
-        print(f"Layered Shapley: {num_tuples_with_shapley_above_threshold} tuples flagged above threshold "
-              f"with alpha {alpha} and beta {beta}. Calculation took {elapsed_time:.3f} seconds.")
-        return num_tuples_with_shapley_above_threshold
+        print(f"Layered Shapley: AUC {auc} with alpha {alpha} and beta {beta}. Calculation took {elapsed_time:.3f} "
+              f"seconds.")
+        return auc
 
     # def _calculate_with_smart_threshold_helper(self, D, t, full_tvd, s_col, o_col, a_col, alpha=10, beta=10, n=1000,
     #                                            iterations=1):
