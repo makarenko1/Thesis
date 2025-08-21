@@ -160,11 +160,11 @@ class LayeredShapleyValues:
                     D_minus_S_minus_t.remove(t)
                 except ValueError:
                     pass
-                tvd_S_and_t = ProxyMutualInformationTVD(data=pd.DataFrame(D_minus_S, columns=[
-                    s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
                 tvd_S = ProxyMutualInformationTVD(data=pd.DataFrame(D_minus_S_minus_t, columns=[
                     s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
-                shapley_estimate_for_kth_level += ((1 / m_k) * abs(abs(full_tvd - tvd_S_and_t) - abs(full_tvd - tvd_S)))
+                tvd_S_and_t = ProxyMutualInformationTVD(data=pd.DataFrame(D_minus_S, columns=[
+                    s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
+                shapley_estimate_for_kth_level += ((1 / m_k) * ((full_tvd - tvd_S) - (full_tvd - tvd_S_and_t)))
 
             shapley_estimate_for_all_levels += (1 / n) * shapley_estimate_for_kth_level
         return shapley_estimate_for_all_levels
