@@ -430,7 +430,7 @@ class ShapleyValues:
 
         start_time = time.time()  # Record start time
 
-        avg_shapley_values_per_tuple = defaultdict(lambda: 0)
+        avg_shapley_value_per_tuple = defaultdict(lambda: 0)
         for _ in range(times):
             for t in D_shortened:
                 D_tag = copy.deepcopy(D)
@@ -443,11 +443,11 @@ class ShapleyValues:
                     s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
 
                 shapley_value = abs(tvd_S_and_t - tvd_S)
-                avg_shapley_values_per_tuple[t] += (shapley_value / times)
+                avg_shapley_value_per_tuple[t] += (shapley_value / times)
 
         num_tuples_with_shapley_above_threshold = 0
         for t in D_shortened:
-            if avg_shapley_values_per_tuple[t] >= threshold:
+            if avg_shapley_value_per_tuple[t] >= threshold:
                 num_tuples_with_shapley_above_threshold += D.count(t)
 
         end_time = time.time()  # Record end time
