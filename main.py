@@ -10,6 +10,7 @@ from proxy_mutual_information_nist_contest import ProxyMutualInformationNistCont
 from proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
 from proxy_mutual_information_tvd import ProxyMutualInformationTVD
 from repair_maxsat import ProxyRepairMaxSat
+from residual_auc_measure import ResidualAUCMeasure
 from shapley_values import ShapleyValues, LayeredShapleyValues
 
 
@@ -382,19 +383,18 @@ def plot_layered_shapley_values():
 
     # Prepare result containers
     mutual_information_scores = []
-    repair_scores = []
-    layered_shapley_values = []
+    residual_scores = []
+    layered_shapley_scores = []
 
     # Compute metric values
     for (s_col, o_col, a_col), path in zip(all_attributes, all_paths):
         mutual_information = MutualInformation(datapath=path).calculate(s_col, o_col, a_col)
-        # repair_score = ProxyRepairMaxSat(datapath=path).calculate(s_col, o_col, a_col)
-        repair_score = 0
+        residual_score = ResidualAUCMeasure(datapath=path).calculate(s_col, o_col, a_col)
         shapley_value = LayeredShapleyValues(datapath=path).calculate(s_col, o_col, a_col)
 
         mutual_information_scores.append(mutual_information)
-        repair_scores.append(repair_score)
-        layered_shapley_values.append(shapley_value)
+        residual_scores.append(residual_score)
+        layered_shapley_scores.append(shapley_value)
 
     # Define dataset colors
     dataset_colors = {
@@ -412,15 +412,15 @@ def plot_layered_shapley_values():
     axes[0].set_title("Mutual Information")
     axes[0].set_ylabel("MI Score")
 
-    # Repair subplot
-    axes[1].bar(labels, repair_scores, color=colors)
-    axes[1].set_title("Repair Score")
-    axes[1].set_ylabel("Repair")
+    # Residual AUC subplot
+    axes[1].bar(labels, residual_scores, color=colors)
+    axes[1].set_title("Residual AUC Score")
+    axes[1].set_ylabel("Residual AUC")
 
-    # Layered Shapley subplot
-    axes[2].bar(labels, layered_shapley_values, color=colors)
-    axes[2].set_title("Layered Shapley Value")
-    axes[2].set_ylabel("Shapley Value")
+    # Layered Shapley AUC subplot
+    axes[2].bar(labels, layered_shapley_scores, color=colors)
+    axes[2].set_title("Layered Shapley AUC Score")
+    axes[2].set_ylabel("Shapley AUC")
     axes[2].set_xticks(np.arange(len(labels)))
     axes[2].set_xticklabels(labels, rotation=45, ha='right')
 

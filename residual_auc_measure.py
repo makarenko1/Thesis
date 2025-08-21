@@ -24,30 +24,24 @@ class ResidualAUCMeasure:
     def _auc_from_values_and_counts(values, counts):
         """
         values: 1D array of nonnegative scores (residuals per unique tuple)
-        counts: 1D array of multiplicities (how many times each tuple occurs in D)
+        counts: 1D array of multiplicities
 
-        Returns AUC of cumulative residual mass vs cumulative tuple fraction.
+        Returns AUC under the empirical CDF of residuals.
         """
-        # Weight residual by multiplicity
-        w = counts.astype(float)
-        v = values.astype(float)
-        weighted = w * v
-        total_mass = weighted.sum()
-        if total_mass <= 0:
-            # No residual signal; define AUC = 0.0 (nothing concentrated)
+        # Expand into weighted sample
+        sample = np.repeat(values, counts.astype(int))
+        if len(sample) == 0:
             return 0.0
 
-        # Sort by residual descending (break ties arbitrarily but consistently)
-        order = np.argsort(-v)
-        w_sorted = w[order]
-        weighted_sorted = weighted[order]
+        # Sort ascending residuals
+        sample_sorted = np.sort(sample)
 
-        # x-axis: cumulative fraction of tuples (by count), y-axis: cumulative mass fraction
-        cum_tuples = np.cumsum(w_sorted) / w_sorted.sum()
-        cum_mass = np.cumsum(weighted_sorted) / total_mass
+        # x-axis: residual values, y-axis: empirical CDF
+        n = len(sample_sorted)
+        cdf_y = np.arange(1, n + 1) / n
 
-        # Trapezoidal rule
-        auc = np.trapezoid(cum_mass, cum_tuples)
+        # Numerical integration
+        auc = np.trapezoid(cdf_y, sample_sorted)
         return float(auc)
 
     @staticmethod

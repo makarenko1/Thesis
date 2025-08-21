@@ -172,7 +172,7 @@ class LayeredShapleyValues:
     @staticmethod
     def _get_auc(D, avg_shapley_value_per_tuple):
         """
-        Compute the area under the cumulative Shapley mass curve (AUC).
+        Compute the area under the CDF of Shapley values.
 
         Parameters
         ----------
@@ -184,29 +184,30 @@ class LayeredShapleyValues:
         Returns
         -------
         float
-            AUC score in [0,1], measuring how concentrated the Shapley mass is.
+            AUC under empirical CDF of Shapley values (in [0,1]).
         """
         items = list(avg_shapley_value_per_tuple.items())
-        # sort tuples by shapley value descending
-        items.sort(key=lambda kv: kv[1], reverse=True)
-
-        # collect multiplicities (how many times tuple occurs in D)
-        counts = np.array([D.count(t) for t, _ in items], dtype=float)
-        vals = np.array([v for _, v in items], dtype=float)
-
-        # weight shapley by multiplicity
-        weighted_vals = counts * vals
-        total = weighted_vals.sum()
-        if total <= 0:
+        if not items:
             return 0.0
 
-        # cumulative fraction of tuples (x-axis) and cumulative mass (y-axis)
-        cum_mass = np.cumsum(weighted_vals) / total
-        frac_tuples = np.cumsum(counts) / counts.sum()
+        # Expand shapley values by multiplicity in D
+        expanded = []
+        for t, v in items:
+            expanded.extend([v] * D.count(t))
 
-        # trapezoidal integration for AUC
-        auc = np.trapezoid(cum_mass, frac_tuples)
-        return auc
+        values = np.array(expanded, dtype=float)
+        if len(values) == 0:
+            return 0.0
+
+        # Sort ascending for CDF
+        values_sorted = np.sort(values)
+
+        n = len(values_sorted)
+        cdf_y = np.arange(1, n + 1) / n  # empirical CDF
+
+        # Integrate CDF over Shapley value axis
+        auc = np.trapezoid(cdf_y, values_sorted)
+        return float(auc)
 
     def calculate(self, s_col, o_col, a_col=None, alpha=1, beta=2.5 , n=10, data=None):
         """
