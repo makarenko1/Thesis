@@ -51,10 +51,11 @@ class ProxyRepairMaxSat:
             self.dataset[col] = LabelEncoder().fit_transform(self.dataset[col])
 
         D = list(self.dataset[cols].itertuples(index=False, name=None))
+        D_shortened = list(set(D))
 
         start_time = time.time()
 
-        soft_clauses, hard_clauses = self.conversion_to_solving_general_3cnf(D, a_col)
+        soft_clauses, hard_clauses, D_star = self.conversion_to_solving_general_3cnf(D_shortened, a_col)
 
         opt = Optimize()
         # Add constraints to the optimizer
@@ -71,7 +72,7 @@ class ProxyRepairMaxSat:
 
         # Compute DR = satisfying assignment
         DR = set()
-        for t in D:
+        for t in D_star:
             if model.evaluate(Bool(f"x_{t}")):
                 DR.add(t)
 
@@ -171,4 +172,4 @@ class ProxyRepairMaxSat:
                 hard_clauses.add(Or(Not(x_t1), Not(x_t2), x_t3))
                 used_keys.add(key)
 
-        return soft_clauses, hard_clauses
+        return soft_clauses, hard_clauses, D_star

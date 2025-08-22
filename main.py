@@ -377,22 +377,25 @@ def plot_layered_shapley_values():
     ]
 
     all_attributes = adult_attributes + stackoverflow_attributes + compas_attributes
-    all_paths = ["data/adult.csv"] * len(adult_attributes) + \
-                ["data/stackoverflow.csv"] * len(stackoverflow_attributes) + \
-                ["data/compas.csv"] * len(compas_attributes)
+    all_paths = (["data/adult.csv"] * len(adult_attributes) +
+                 ["data/stackoverflow.csv"] * len(stackoverflow_attributes) +
+                 ["data/compas.csv"] * len(compas_attributes))
 
     # Prepare result containers
     mutual_information_scores = []
     residual_scores = []
+    repair_scores = []
     layered_shapley_scores = []
 
     # Compute metric values
     for (s_col, o_col, a_col), path in zip(all_attributes, all_paths):
         mutual_information = MutualInformation(datapath=path).calculate(s_col, o_col, a_col)
+        repair_score = ProxyRepairMaxSat(datapath=path).calculate(s_col, o_col, a_col)
         residual_score = ResidualAUCMeasure(datapath=path).calculate(s_col, o_col, a_col)
         shapley_value = LayeredShapleyValues(datapath=path).calculate(s_col, o_col, a_col)
 
         mutual_information_scores.append(mutual_information)
+        repair_scores.append(repair_score)
         residual_scores.append(residual_score)
         layered_shapley_scores.append(shapley_value)
 
@@ -404,37 +407,42 @@ def plot_layered_shapley_values():
     }
     colors = [dataset_colors[path] for path in all_paths]
 
-    # Plotting
-    fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+    # Plotting (now 4 rows)
+    fig, axes = plt.subplots(4, 1, figsize=(12, 12), sharex=True)
 
     # MI subplot
     axes[0].bar(labels, mutual_information_scores, color=colors)
     axes[0].set_title("Mutual Information")
     axes[0].set_ylabel("MI Score")
 
+    # Repair subplot
+    axes[1].bar(labels, repair_scores, color=colors)
+    axes[1].set_title("Repair Measure")
+    axes[1].set_ylabel("Repair Score")
+
     # Residual AUC subplot
-    axes[1].bar(labels, residual_scores, color=colors)
-    axes[1].set_title("Residual AUC Score")
-    axes[1].set_ylabel("Residual AUC")
+    axes[2].bar(labels, residual_scores, color=colors)
+    axes[2].set_title("Residual AUC Score")
+    axes[2].set_ylabel("Residual AUC")
 
     # Layered Shapley AUC subplot
-    axes[2].bar(labels, layered_shapley_scores, color=colors)
-    axes[2].set_title("Layered Shapley AUC Score")
-    axes[2].set_ylabel("Shapley AUC")
-    axes[2].set_xticks(np.arange(len(labels)))
-    axes[2].set_xticklabels(labels, rotation=45, ha='right')
+    axes[3].bar(labels, layered_shapley_scores, color=colors)
+    axes[3].set_title("Layered Shapley AUC Score")
+    axes[3].set_ylabel("Shapley AUC")
+    axes[3].set_xticks(np.arange(len(labels)))
+    axes[3].set_xticklabels(labels, rotation=45, ha='right')
 
-    # Add legend manually
+    # Legend (shared)
     legend_labels = {
         "data/adult.csv": "Adult",
         "data/stackoverflow.csv": "StackOverflow",
         "data/compas.csv": "Compas"
     }
-    handles = [plt.Rectangle((0,0),1,1, color=dataset_colors[k]) for k in dataset_colors]
+    handles = [plt.Rectangle((0, 0), 1, 1, color=dataset_colors[k]) for k in dataset_colors]
     axes[0].legend(handles, legend_labels.values(), loc="upper right")
 
     plt.tight_layout()
-    plt.savefig("plots/plot_layered_shapley_values_comparison_n_10.png")
+    plt.savefig("plots/plot_layered_shapley_values_comparison_with_repair.png")
     plt.show()
 
 
