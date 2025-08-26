@@ -164,7 +164,7 @@ class LayeredShapleyValues:
                     s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
                 tvd_S_and_t = ProxyMutualInformationTVD(data=pd.DataFrame(D_minus_S, columns=[
                     s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
-                shapley_estimate_for_kth_level += ((1 / m_k) * ((full_tvd - tvd_S) - (full_tvd - tvd_S_and_t)))
+                shapley_estimate_for_kth_level += ((1 / m_k) * (abs(full_tvd - tvd_S) - abs(full_tvd - tvd_S_and_t)))
 
             shapley_estimate_for_all_levels += (1 / n) * shapley_estimate_for_kth_level
         return shapley_estimate_for_all_levels
