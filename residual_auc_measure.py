@@ -21,30 +21,6 @@ class ResidualAUCMeasure:
         self.dataset = pd.read_csv(datapath) if datapath is not None else data.copy()
 
     @staticmethod
-    def _auc_from_values_and_counts(values, counts):
-        """
-        values: 1D array of nonnegative scores (residuals per unique tuple)
-        counts: 1D array of multiplicities
-
-        Returns AUC under the empirical CDF of residuals.
-        """
-        # Expand into weighted sample
-        sample = np.repeat(values, counts.astype(int))
-        if len(sample) == 0:
-            return 0.0
-
-        # Sort ascending residuals
-        sample_sorted = np.sort(sample)
-
-        # x-axis: residual values, y-axis: empirical CDF
-        n = len(sample_sorted)
-        cdf_y = np.arange(1, n + 1) / n
-
-        # Numerical integration
-        auc = np.trapezoid(cdf_y, sample_sorted)
-        return float(auc)
-
-    @staticmethod
     def _encode_and_clean(df, cols):
         df = df.replace(["NA", "N/A", ""], pd.NA).dropna(subset=cols).copy()
         for c in cols:
@@ -128,10 +104,10 @@ class ResidualAUCMeasure:
                                                                  df[o_col].values,
                                                                  df[a_col].values)
 
-        auc = self._auc_from_values_and_counts(values, counts)
+        auc_approximation = float(np.sum(values * counts))
 
         elapsed = time.time() - start
-        print(f"Residual AUC: {auc:.4f} "
+        print(f"Residual AUC (approximation): {auc_approximation:.4f} "
               f"({'conditional' if a_col is not None else 'unconditional'}) "
               f"computed in {elapsed:.3f}s on {len(df)} rows.")
-        return auc
+        return auc_approximation
