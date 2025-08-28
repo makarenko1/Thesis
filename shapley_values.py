@@ -1,11 +1,14 @@
 import copy
 import math
 import random
+import re
 import time
 from collections import defaultdict, Counter
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from matplotlib import pyplot as plt
 from sklearn.preprocessing import LabelEncoder
 
 from proxy_mutual_information_tvd import ProxyMutualInformationTVD
@@ -170,6 +173,34 @@ class LayeredShapleyValues:
         return shapley_estimate_for_all_levels
 
     @staticmethod
+    def _safe_filepath(stem: str, folder: str = "plots", suffix: str = ".png") -> str:
+        # Replace any character that’s not alphanumeric, underscore, dot, or dash with underscore
+        safe_stem = re.sub(r'[<>:"/\\|?*]', "_", stem)
+        Path(folder).mkdir(parents=True, exist_ok=True)
+        return str(Path(folder) / f"{safe_stem}{suffix}")
+
+    @staticmethod
+    def _plot_shapley_values(values, title=None, savepath=None):
+        """
+        Plot Shapley values (sorted, no x tick labels, no cumulative).
+        X-axis: record index after sorting (0..N-1)
+        Y-axis: Shapley value
+        """
+        if values.size == 0:
+            return
+        v_sorted = np.sort(values)[::-1]  # largest first
+        plt.figure(figsize=(7, 4))
+        plt.scatter(range(len(v_sorted)), v_sorted)
+        plt.ylabel("Shapley value")
+        if title:
+            plt.title(title)
+        # no x tick labels
+        plt.xticks([])
+        plt.tight_layout()
+        if savepath:
+            plt.savefig(LayeredShapleyValues._safe_filepath(savepath), dpi=120)
+
+    @staticmethod
     def _get_auc(D, avg_shapley_value_per_tuple):
         """
         Compute the area under the CDF of Shapley values.
@@ -199,17 +230,13 @@ class LayeredShapleyValues:
         if len(values) == 0:
             return 0.0
 
-        # Sort ascending for CDF
-        values_sorted = np.sort(values)
+        # Sum value * multiplicity for each unique tuple
+        total = 0.0
+        for t, v in avg_shapley_value_per_tuple.items():
+            total += float(v) * D.count(t)
+        return total, values
 
-        n = len(values_sorted)
-        cdf_y = np.arange(1, n + 1) / n  # empirical CDF
-
-        # Integrate CDF over Shapley value axis
-        auc = np.trapezoid(cdf_y, values_sorted)
-        return float(auc)
-
-    def calculate(self, s_col, o_col, a_col=None, alpha=1, beta=2.5 , n=10, data=None):
+    def calculate(self, s_col, o_col, a_col=None, alpha=1, beta=2.5 , n=10, data=None, plot=False):
         """
         Calculates Shapley-based unfairness score according to the Layered Shapley Algorithm.
 
@@ -256,7 +283,11 @@ class LayeredShapleyValues:
         for t in candidates:
             avg_shapley_value_per_tuple[t] = self._calculate_for_one_tuple(
                 D, t, full_tvd, s_col, o_col, a_col=a_col, alpha=alpha, beta=beta, n=n)
-        auc = self._get_auc(D, avg_shapley_value_per_tuple)
+        auc, values = self._get_auc(D, avg_shapley_value_per_tuple)
+
+        if plot:
+            LayeredShapleyValues._plot_shapley_values(values, title=f"Shapley Values for {s_col}, {o_col} | {a_col}",
+                                                      savepath=f"shapley_curve_{s_col}_{o_col}_{a_col}")
 
         end_time = time.time()  # Record end time
         elapsed_time = end_time - start_time

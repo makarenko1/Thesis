@@ -1,6 +1,10 @@
+import re
 import time
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
+from matplotlib import pyplot as plt
 from sklearn.preprocessing import LabelEncoder
 
 class ResidualAUCMeasure:
@@ -82,7 +86,35 @@ class ResidualAUCMeasure:
         counts = C[a_idx, s_idx, o_idx]                         # multiplicity for each unique (s,o,a)
         return tuples, values, counts
 
-    def calculate(self, s_col, o_col, a_col=None):
+    @staticmethod
+    def _safe_filepath(stem: str, folder: str = "plots", suffix: str = ".png") -> str:
+        # Replace any character that’s not alphanumeric, underscore, dot, or dash with underscore
+        safe_stem = re.sub(r'[<>:"/\\|?*]', "_", stem)
+        Path(folder).mkdir(parents=True, exist_ok=True)
+        return str(Path(folder) / f"{safe_stem}{suffix}")
+
+    @staticmethod
+    def _plot_residuals(values, title=None, savepath=None):
+        """
+        Plot Shapley values (sorted, no x tick labels, no cumulative).
+        X-axis: record index after sorting (0..N-1)
+        Y-axis: Shapley value
+        """
+        if values.size == 0:
+            return
+        v_sorted = np.sort(values)[::-1]  # largest first
+        plt.figure(figsize=(7, 4))
+        plt.scatter(range(len(v_sorted)), v_sorted)
+        plt.ylabel("Residual value")
+        if title:
+            plt.title(title)
+        # no x tick labels
+        plt.xticks([])
+        plt.tight_layout()
+        if savepath:
+            plt.savefig(ResidualAUCMeasure._safe_filepath(savepath), dpi=120)
+
+    def calculate(self, s_col, o_col, a_col=None, plot=False):
         """
         Compute the residual AUC. If `a_col` is provided, uses conditional residuals R_{s,o,a};
         otherwise uses unconditional residuals R_{s,o}.
@@ -105,6 +137,10 @@ class ResidualAUCMeasure:
                                                                  df[a_col].values)
 
         auc_approximation = float(np.sum(values * counts))
+
+        if plot:
+            ResidualAUCMeasure._plot_residuals(values, title=f"Residuals for {s_col}, {o_col} | {a_col}",
+                                               savepath=f"residuals_{s_col}_{o_col}_{a_col}")
 
         elapsed = time.time() - start
         print(f"Residual AUC (approximation): {auc_approximation:.4f} "
