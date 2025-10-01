@@ -351,96 +351,149 @@ def plot_anomalous_treatment_count_pmi_repair():
     plt.show()
 
 
-def plot_layered_shapley_values():
-    labels = [
-        "sex/income | education", "race/income | education", "education/education-num | sex",
-        "Country/EdLevel | Age", "Country/DevType | Age", "Country/SurveyLength | Age", "Country/SOVisitFreq | Age",
-        "race/charge_desc | age", "race/score_text | age", "race/sex | age"
+def plot_proxies_comparison():
+    # --- config ---------------------------------------------------
+    DATASETS = [
+        {"name": "Adult", "path": "data/adult.csv", "attrs": [
+            ("sex", "income>50K", "education"),
+            ("race", "income>50K", "education"),
+            ("education", "education-num", "sex"),
+        ]},
+        {"name": "StackOverflow", "path": "data/stackoverflow.csv", "attrs": [
+            ("Country", "EdLevel", "Age"),
+            ("Country", "DevType", "Age"),
+            ("Country", "SurveyLength", "Age"),
+            ("Country", "SOVisitFreq", "Age"),
+        ]},
+        {"name": "COMPAS", "path": "data/compas.csv", "attrs": [
+            ("race", "c_charge_desc", "age"),
+            ("race", "score_text", "age"),
+            ("race", "sex", "age"),
+        ]},
     ]
 
-    # Define attribute triplets
-    adult_attributes = [
-        ("sex", "income>50K", "education"),
-        ("race", "income>50K", "education"),
-        ("education", "education-num", "sex")
-    ]
-    stackoverflow_attributes = [
-        ("Country", "EdLevel", "Age"),
-        ("Country", "DevType", "Age")
-    ]
-    compas_attributes = [
-        ("race", "c_charge_desc", "age"),
-        ("race", "score_text", "age"),
-        ("race", "sex", "age")
+    # Row order: MI, PrivBayes Original, PrivBayes with offset, TVD
+    PROXIES = [
+        ("Mutual\nInformation", "MI"),
+        ("PrivBayes Proxy", "PRIV_ORIG"),
+        ("PrivBayes Proxy\nwith offset", "PRIV_OFFSET"),
+        ("TVD Proxy", "TVD"),
     ]
 
-    all_attributes = adult_attributes + stackoverflow_attributes + compas_attributes
-    all_paths = (["data/adult.csv"] * len(adult_attributes) +
-                 ["data/stackoverflow.csv"] * len(stackoverflow_attributes) +
-                 ["data/compas.csv"] * len(compas_attributes))
-
-    # Prepare result containers
-    mutual_information_scores = []
-    repair_scores = []
-    residual_scores = []
-    layered_shapley_scores = []
-
-    # Compute metric values
-    for (s_col, o_col, a_col), path in zip(all_attributes, all_paths):
-        mutual_information = MutualInformation(datapath=path).calculate(s_col, o_col, a_col)
-        repair_score = ProxyRepairMaxSat(datapath=path).calculate(s_col, o_col, a_col)
-        residual_score = ResidualAUCMeasure(datapath=path).calculate(s_col, o_col, a_col, plot=True)
-        shapley_score = LayeredShapleyValues(datapath=path).calculate(s_col, o_col, a_col, plot=True)
-
-        mutual_information_scores.append(mutual_information)
-        repair_scores.append(repair_score)
-        residual_scores.append(residual_score)
-        layered_shapley_scores.append(shapley_score)
-
-    # Define dataset colors
-    dataset_colors = {
-        "data/adult.csv": "#1f77b4",         # blue
-        "data/stackoverflow.csv": "#ff7f0e", # orange
-        "data/compas.csv": "#2ca02c"         # green
+    PROXY_COLOR = {
+        "MI": "#1f77b4",
+        "PRIV_ORIG": "#ff7f0e",
+        "PRIV_OFFSET": "#9467bd",
+        "TVD": "#2ca02c",
     }
-    colors = [dataset_colors[path] for path in all_paths]
 
-    # Plotting (now 4 rows)
-    fig, axes = plt.subplots(4, 1, figsize=(12, 12), sharex=True)
+    import textwrap
 
-    # MI subplot
-    axes[0].bar(labels, mutual_information_scores, color=colors)
-    axes[0].set_title("Mutual Information")
-    axes[0].set_ylabel("MI Score")
+    # Bigger fonts everywhere
+    TITLE_FS = 26  # column titles
+    ROWLAB_FS = 26  # row (y-axis) labels
+    TICK_FS = 24  # tick labels (bottom axis + y-ticks)
+    ANNOT_FS = 18  # numbers above bars
 
-    # Repair subplot
-    axes[1].bar(labels, repair_scores, color=colors)
-    axes[1].set_title("Repair Score")
-    axes[1].set_ylabel("Repair")
+    # --- compute values
+    vals = {k: {} for _, k in PROXIES}
+    for ds in DATASETS:
+        ds_name, path, attrs = ds["name"], ds["path"], ds["attrs"]
+        mi_scores, priv_scores_orig, priv_scores_offset, tvd_scores = [], [], [], []
+        for s_col, o_col, a_col in attrs:
+            mi_scores.append(MutualInformation(datapath=path).calculate(s_col, o_col, a_col))
+            priv_scores_orig.append(ProxyMutualInformationPrivbayes(datapath=path).calculate(
+                s_col, o_col, a_col, add_offset=False))
+            priv_scores_offset.append(ProxyMutualInformationPrivbayes(datapath=path).calculate(
+                s_col, o_col, a_col, add_offset=True))
+            tvd_scores.append(ProxyMutualInformationTVD(datapath=path).calculate(s_col, o_col, a_col))
+        vals["MI"][ds_name] = mi_scores
+        vals["PRIV_ORIG"][ds_name] = priv_scores_orig
+        vals["PRIV_OFFSET"][ds_name] = priv_scores_offset
+        vals["TVD"][ds_name] = tvd_scores
 
-    # Residual subplot
-    axes[2].bar(labels, residual_scores, color=colors)
-    axes[2].set_title("Residual Score")
-    axes[2].set_ylabel("Residual")
+    # labels per dataset
+    ds_labels = {ds["name"]: [f"{s},{o} | {a}" for (s, o, a) in ds["attrs"]] for ds in DATASETS}
 
-    # Layered Shapley subplot
-    axes[3].bar(labels, layered_shapley_scores, color=colors)
-    axes[3].set_title("Layered Shapley Score")
-    axes[3].set_ylabel("Shapley")
-    axes[3].set_xticks(np.arange(len(labels)))
-    axes[3].set_xticklabels(labels, rotation=45, ha='right')
+    # --- figure
+    n_rows, n_cols = len(PROXIES), len(DATASETS)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 14), constrained_layout=True)
 
-    # Legend (shared)
-    legend_labels = {
-        "data/adult.csv": "Adult",
-        "data/stackoverflow.csv": "StackOverflow",
-        "data/compas.csv": "Compas"
-    }
-    handles = [plt.Rectangle((0, 0), 1, 1, color=dataset_colors[k]) for k in dataset_colors]
-    axes[0].legend(handles, legend_labels.values(), loc="upper right")
+    if n_rows == 1:
+        axes = np.array([axes])
+    if n_cols == 1:
+        axes = axes.reshape(n_rows, 1)
 
-    plt.tight_layout()
-    plt.savefig("plots/plot_layered_shapley_values_comparison_with_repair.png")
+    def annotate_bar(ax, rect):
+        h = rect.get_height()
+        x = rect.get_x() + rect.get_width() / 2.0
+        va = 'bottom' if h >= 0 else 'top'
+        offset = 6 if h >= 0 else -8
+        ax.annotate(f"{h:.3f}", xy=(x, h), xytext=(0, offset),
+                    textcoords="offset points", ha="center", va=va, fontsize=ANNOT_FS)
+
+    # column titles
+    for c, ds in enumerate(DATASETS):
+        axes[0, c].set_title(ds["name"], fontsize=TITLE_FS)
+
+    # draw bars
+    for r, (proxy_title, proxy_key) in enumerate(PROXIES):
+        color = PROXY_COLOR[proxy_key]
+
+        # common y-range per row (allow negatives for PRIV_ORIG if any)
+        row_vals = []
+        for ds in DATASETS:
+            row_vals.extend(vals[proxy_key][ds["name"]])
+        row_vals = np.asarray(row_vals, dtype=float)
+
+
+        for c, ds in enumerate(DATASETS):
+            ax = axes[r, c]
+            y = vals[proxy_key][ds["name"]]
+            labels = ds_labels[ds["name"]]
+
+            if row_vals.size == 0:
+                row_min, row_max = -1.0, 1.0
+            else:
+                row_min, row_max = float(np.min(row_vals)), float(np.max(row_vals))
+
+            # Always add some proportional padding
+            pad = 0.05 * max(1.0, abs(row_max - row_min))  # 5% of the data range
+
+            if proxy_key in ("MI", "PRIV_OFFSET", "TVD"):
+                ymin, ymax = 0.0, row_max + pad
+            else:
+                ymin, ymax = row_min - pad, row_max + pad
+
+            ax.set_ylim(ymin, ymax)
+
+            # tighter spacing: compress positions + narrower bars
+            x = np.arange(len(y)) * 0.65
+            bars = ax.bar(x, y, color=color, width=0.5)
+            for rect in bars:
+                annotate_bar(ax, rect)
+
+            ax.set_xticks(x)
+
+            # bottom row: bigger xticklabels
+            if r == n_rows - 1:
+                ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=TICK_FS)
+            else:
+                ax.set_xticklabels([])
+
+            if c == 0:
+                ax.set_ylabel(proxy_title, fontsize=ROWLAB_FS, labelpad=20)
+
+            ax.yaxis.grid(True, linestyle=":", linewidth=0.9, alpha=0.65)
+            ax.tick_params(axis='y', labelsize=TICK_FS)
+            ax.set_ylim(row_min, row_max)
+
+            # NO zero line anywhere (PrivBayes orig can be negative; limits already handle it)
+            if c == 0:
+                ax.set_ylabel(proxy_title, fontsize=ROWLAB_FS)
+
+    # No legend (colors are per-row and labeled by y-axis)
+    plt.savefig("plots/plot_proxies_4x3_no_zeroline_nolegend_bigfonts.png", dpi=220)
     plt.show()
 
 
@@ -515,4 +568,4 @@ if __name__ == "__main__":
     # plot_anomalous_treatment_count_pmi_repair()
 
     # -----------------Shapley Values------------------
-    plot_layered_shapley_values()
+    plot_proxies_comparison()

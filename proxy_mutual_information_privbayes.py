@@ -28,7 +28,7 @@ class ProxyMutualInformationPrivbayes:
         else:
             self.dataset = data
 
-    def calculate(self, s_col, o_col, a_col=None):
+    def calculate(self, s_col, o_col, a_col=None, add_offset=True):
         """
         Calculate proxy mutual information I(S;O) or conditional mutual information I(S;O|A).
 
@@ -80,7 +80,8 @@ class ProxyMutualInformationPrivbayes:
             else:
                 mi = self._getF_multiclass_unconditional(s_col, o_col)
 
-        mi += 0.5  # non-negative adjustment
+        if add_offset:
+            mi += 0.5  # non-negative adjustment
         elapsed_time = time.time() - start_time
         print(f"Privbayes: Proxy Mutual Information between '{s_col}' and '{o_col}'"
               + (f" conditioned on '{a_col}'" if a_col else "")
