@@ -351,7 +351,7 @@ def plot_anomalous_treatment_count_pmi_repair():
     plt.show()
 
 
-def plot_proxies_comparison():
+def plot_proxies_comparison_1():
     # --- config ---------------------------------------------------
     DATASETS = [
         {"name": "Adult", "path": "data/adult.csv", "attrs": [
@@ -493,8 +493,117 @@ def plot_proxies_comparison():
                 ax.set_ylabel(proxy_title, fontsize=ROWLAB_FS)
 
     # No legend (colors are per-row and labeled by y-axis)
-    plt.savefig("plots/plot_proxies_4x3_no_zeroline_nolegend_bigfonts.png", dpi=220)
+    plt.savefig("plots/plot_proxies_4x3.png", dpi=220)
     plt.show()
+
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+def plot_proxies_comparison_2():
+    # --- config ---------------------------------------------------
+    DATASETS = [
+        {"name": "Adult", "path": "data/adult.csv", "attrs": [
+            ("sex", "income>50K", "education"),
+            ("race", "income>50K", "education"),
+            ("education", "education-num", "sex"),
+        ]},
+        {"name": "StackOverflow", "path": "data/stackoverflow.csv", "attrs": [
+            ("Country", "EdLevel", "Age"),
+            ("Country", "DevType", "Age"),
+            ("Country", "SurveyLength", "Age"),
+            ("Country", "SOVisitFreq", "Age"),
+        ]},
+        {"name": "COMPAS", "path": "data/compas.csv", "attrs": [
+            ("race", "c_charge_desc", "age"),
+            ("race", "score_text", "age"),
+            ("race", "sex", "age"),
+        ]},
+    ]
+
+    MEASURES = [
+        ("TVD Proxy", "TVD"),
+        ("Tuple Contribution", "AUC"),
+    ]
+
+    # blue and orange colors
+    MEASURE_COLOR = {
+        "TVD": "#1f77b4",   # blue
+        "AUC": "#ff7f0e",   # orange
+    }
+
+    TITLE_FS = 26
+    ROWLAB_FS = 26
+    TICK_FS = 24
+    ANNOT_FS = 18
+
+    # --- compute values ------------------------------------------
+    vals = {k: {} for _, k in MEASURES}
+    for ds in DATASETS:
+        ds_name, path, attrs = ds["name"], ds["path"], ds["attrs"]
+        tvd_scores, auc_scores = [], []
+        for s_col, o_col, a_col in attrs:
+            tvd_scores.append(ProxyMutualInformationTVD(datapath=path).calculate(s_col, o_col, a_col))
+            auc_scores.append(ResidualAUCMeasure(datapath=path).calculate(s_col, o_col, a_col))
+        vals["TVD"][ds_name] = tvd_scores
+        vals["AUC"][ds_name] = auc_scores
+
+    ds_labels = {ds["name"]: [f"{s},{o} | {a}" for (s, o, a) in ds["attrs"]] for ds in DATASETS}
+
+    # --- figure ---------------------------------------------------
+    n_rows, n_cols = len(MEASURES), len(DATASETS)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 10), constrained_layout=True)
+
+    def annotate_bar(ax, rect):
+        h = rect.get_height()
+        x = rect.get_x() + rect.get_width() / 2.0
+        va = 'bottom' if h >= 0 else 'top'
+        offset = 6 if h >= 0 else -8
+        ax.annotate(f"{h:.3f}", xy=(x, h), xytext=(0, offset),
+                    textcoords="offset points", ha="center", va=va, fontsize=ANNOT_FS)
+
+    # Column titles
+    for c, ds in enumerate(DATASETS):
+        axes[0, c].set_title(ds["name"], fontsize=TITLE_FS)
+
+    # Draw bars ----------------------------------------------------
+    for r, (measure_title, measure_key) in enumerate(MEASURES):
+        color = MEASURE_COLOR[measure_key]
+        row_vals = []
+        for ds in DATASETS:
+            row_vals.extend(vals[measure_key][ds["name"]])
+        row_vals = np.asarray(row_vals, dtype=float)
+        row_min, row_max = float(np.min(row_vals)), float(np.max(row_vals))
+        pad = 0.05 * max(1.0, abs(row_max - row_min))
+        ymin, ymax = 0.0, row_max + pad
+
+        for c, ds in enumerate(DATASETS):
+            ax = axes[r, c]
+            y = vals[measure_key][ds["name"]]
+            labels = ds_labels[ds["name"]]
+
+            ax.set_ylim(ymin, ymax)
+            x = np.arange(len(y)) * 0.65
+            bars = ax.bar(x, y, color=color, width=0.5)
+            for rect in bars:
+                annotate_bar(ax, rect)
+
+            ax.set_xticks(x)
+            if r == n_rows - 1:
+                ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=TICK_FS)
+            else:
+                ax.set_xticklabels([])
+
+            if c == 0:
+                ax.set_ylabel(measure_title, fontsize=ROWLAB_FS, labelpad=20)
+
+            ax.yaxis.grid(True, linestyle=":", linewidth=0.9, alpha=0.65)
+            ax.tick_params(axis='y', labelsize=TICK_FS)
+
+    plt.savefig("plots/plot_proxies_2x3.png", dpi=220)
+    plt.show()
+
+
 
 
 if __name__ == "__main__":
@@ -568,4 +677,4 @@ if __name__ == "__main__":
     # plot_anomalous_treatment_count_pmi_repair()
 
     # -----------------Shapley Values------------------
-    plot_proxies_comparison()
+    plot_proxies_comparison_2()
