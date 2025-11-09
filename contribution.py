@@ -7,6 +7,7 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from sklearn.preprocessing import LabelEncoder
 
+
 class ResidualAUCMeasure:
     """
     Computes an AUC-style concentration score for conditional dependence residuals.
