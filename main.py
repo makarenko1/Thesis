@@ -1,15 +1,10 @@
 import numpy as np
-from anomalous_treatment_count import AnomalousTreatmentCount
 from matplotlib import pyplot as plt
-from pmi_threshold_detector import PMIThresholdDetector
-from proxy_mutual_information_lipshitz import ProxyMutualInformationLipschitz
-from proxy_mutual_information_nist_contest import ProxyMutualInformationNistContest
-from proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
-from shapley_values import ShapleyValues, LayeredShapleyValues
 
 from tuple_contribution import TupleContribution
 from mutual_information import MutualInformation
 from proxy_mutual_information_tvd import ProxyMutualInformationTVD
+from unused_measures.proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
 
 
 def create_plot_1():
@@ -60,10 +55,10 @@ def create_plot_1():
         ds_name, path, attrs = ds["name"], ds["path"], ds["attrs"]
         mi_scores, priv_scores_orig, priv_scores_offset, tvd_scores = [], [], [], []
         for s_col, o_col, a_col in attrs:
-            mi_scores.append(MutualInformation(datapath=path).calculate(s_col, o_col, a_col))
+            mi_scores.append(MutualInformation(datapath=path).calculate([s_col, o_col, a_col]))
             priv_scores_orig.append(ProxyMutualInformationPrivbayes(datapath=path).calculate(s_col, o_col, a_col))
             priv_scores_offset.append(ProxyMutualInformationPrivbayes(datapath=path).calculate(s_col, o_col, a_col))
-            tvd_scores.append(ProxyMutualInformationTVD(datapath=path).calculate(s_col, o_col, a_col))
+            tvd_scores.append(ProxyMutualInformationTVD(datapath=path).calculate([s_col, o_col, a_col]))
         vals["MI"][ds_name] = mi_scores
         vals["PRIV_ORIG"][ds_name] = priv_scores_orig
         vals["PRIV_OFFSET"][ds_name] = priv_scores_offset
@@ -196,8 +191,8 @@ def create_plot_2():
         ds_name, path, attrs = ds["name"], ds["path"], ds["attrs"]
         tvd_scores, auc_scores = [], []
         for s_col, o_col, a_col in attrs:
-            tvd_scores.append(ProxyMutualInformationTVD(datapath=path).calculate(s_col, o_col, a_col))
-            auc_scores.append(TupleContribution(datapath=path).calculate(s_col, o_col, a_col))
+            tvd_scores.append(ProxyMutualInformationTVD(datapath=path).calculate([s_col, o_col, a_col]))
+            auc_scores.append(TupleContribution(datapath=path).calculate([s_col, o_col, a_col]))
         vals["TVD"][ds_name] = tvd_scores
         vals["AUC"][ds_name] = auc_scores
 
@@ -256,6 +251,35 @@ def create_plot_2():
     plt.savefig("plots/plot2.png", dpi=220)
     plt.show()
 
+
+######################################### Experiments ##########################################
+
+adult_criteria = [["sex", "income", "education-num"], ["sex", "income", "hours-per-week"],
+                  ["race", "income", "education-num"], ["race", "income", "hours-per-week"]]
+
+stackoverflow_criteria = [["Country", "RemoteWork", "Employment"], ["Age", "PurchaseInfluence", "OrgSize"],
+                          ["Country", "TechEndorse", "YearsCodePro"], ["Age", "BuyNewTool", "BuildvsBuy"]]
+
+compas_criteria = [["race", "is_recid", "age_cat"], ["sex", "is_recid", "priors_count"],
+                   ["race", "decile_score", "c_charge_degree"], ["sex", "v_decile_score", "age_cat"]]
+
+healthcare_criteria = [["race", "complications", "age_group"], ["smoker", "complications", "age_group"],
+                       ["race", "income", "county"], ["smoker", "income", "num_children"]]
+
+def run_experiment_1():
+    pass
+
+def run_experiment_2():
+    pass
+
+def run_experiment_3():
+    pass
+
+def run_experiment_4():
+    pass
+
+def run_experiment_5():
+    pass
 
 
 
