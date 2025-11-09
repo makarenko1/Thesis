@@ -1,6 +1,6 @@
 import numpy as np
-from src.mbi import Domain, Dataset, CliqueVector
-from src.mbi.junction_tree import JunctionTree
+from src_for_proxy_mutual_information_mst.mbi import Domain, Dataset, CliqueVector
+from src_for_proxy_mutual_information_mst.mbi.junction_tree import JunctionTree
 from functools import reduce
 import pickle
 import networkx as nx
@@ -191,7 +191,7 @@ class GraphicalModel:
         return CliqueVector(potentials)
 
     def fit(self, data):
-        from src.mbi import Factor
+        from src_for_proxy_mutual_information_mst.mbi import Factor
         assert data.domain.contains(self.domain), 'model domain not compatible with data domain'
         marginals = {}
         for cl in self.cliques:

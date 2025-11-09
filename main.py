@@ -7,7 +7,7 @@ from proxy_mutual_information_nist_contest import ProxyMutualInformationNistCont
 from proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
 from shapley_values import ShapleyValues, LayeredShapleyValues
 
-from contribution import ResidualAUCMeasure
+from tuple_contribution import TupleContribution
 from mutual_information import MutualInformation
 from proxy_mutual_information_tvd import ProxyMutualInformationTVD
 
@@ -199,7 +199,7 @@ def create_plot_2():
         tvd_scores, auc_scores = [], []
         for s_col, o_col, a_col in attrs:
             tvd_scores.append(ProxyMutualInformationTVD(datapath=path).calculate(s_col, o_col, a_col))
-            auc_scores.append(ResidualAUCMeasure(datapath=path).calculate(s_col, o_col, a_col))
+            auc_scores.append(TupleContribution(datapath=path).calculate(s_col, o_col, a_col))
         vals["TVD"][ds_name] = tvd_scores
         vals["AUC"][ds_name] = auc_scores
 

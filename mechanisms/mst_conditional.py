@@ -4,7 +4,7 @@ from scipy import sparse
 from sklearn.preprocessing import LabelEncoder
 
 from mechanisms.cdp2adp import cdp_rho
-from src.mbi import FactoredInference, Dataset, Domain
+from src_for_proxy_mutual_information_mst.mbi import FactoredInference, Dataset, Domain
 
 
 def MST_conditional(data, epsilon, delta, s_col, o_col, a_col):

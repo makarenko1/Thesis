@@ -1,6 +1,6 @@
 import numpy as np
 from collections import defaultdict
-from src.mbi import Domain, Factor, CliqueVector
+from src_for_proxy_mutual_information_mst.mbi import Domain, Factor, CliqueVector
 from functools import reduce
 import itertools
 from multiprocessing import Pool

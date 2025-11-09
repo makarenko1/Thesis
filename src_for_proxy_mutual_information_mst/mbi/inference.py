@@ -1,5 +1,5 @@
 import numpy as np
-from src.mbi import Domain, GraphicalModel, callbacks, CliqueVector
+from src_for_proxy_mutual_information_mst.mbi import Domain, GraphicalModel, callbacks, CliqueVector
 from scipy.sparse.linalg import LinearOperator, eigsh, lsmr, aslinearoperator
 from scipy import optimize, sparse
 from functools import partial
@@ -35,10 +35,10 @@ class FactoredInference:
         self.history = []
         self.elim_order = elim_order
         if backend == 'torch':
-            from src.mbi.torch_factor import Factor
+            from src_for_proxy_mutual_information_mst.mbi.torch_factor import Factor
             self.Factor = Factor
         else:
-            from src.mbi import Factor
+            from src_for_proxy_mutual_information_mst.mbi import Factor
             self.Factor= Factor
 
         self.structural_zeros = CliqueVector({})

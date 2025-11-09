@@ -1,4 +1,4 @@
-from src.mbi import Dataset, Factor, CliqueVector
+from src_for_proxy_mutual_information_mst.mbi import Dataset, Factor, CliqueVector
 from scipy.optimize import minimize
 from collections import defaultdict
 import numpy as np

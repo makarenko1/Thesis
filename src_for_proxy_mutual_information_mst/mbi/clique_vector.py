@@ -13,32 +13,32 @@ class CliqueVector(dict):
 
     @staticmethod
     def zeros(domain, cliques):
-        from src.mbi import Factor
+        from src_for_proxy_mutual_information_mst.mbi import Factor
         return CliqueVector({ cl : Factor.zeros(domain.project(cl)) for cl in cliques })
 
     @staticmethod
     def ones(domain, cliques):
-        from src.mbi import Factor
+        from src_for_proxy_mutual_information_mst.mbi import Factor
         return CliqueVector({ cl : Factor.ones(domain.project(cl)) for cl in cliques })
 
     @staticmethod
     def uniform(domain, cliques):
-        from src.mbi import Factor
+        from src_for_proxy_mutual_information_mst.mbi import Factor
         return CliqueVector({ cl : Factor.uniform(domain.project(cl)) for cl in cliques })
 
     @staticmethod
     def random(domain, cliques, prng=np.random):
-        from src.mbi import Factor
+        from src_for_proxy_mutual_information_mst.mbi import Factor
         return CliqueVector({ cl : Factor.random(domain.project(cl), prng) for cl in cliques })
 
     @staticmethod
     def normal(domain, cliques, prng=np.random):
-        from src.mbi import Factor
+        from src_for_proxy_mutual_information_mst.mbi import Factor
         return CliqueVector({ cl : Factor.normal(domain.project(cl), prng) for cl in cliques })
 
     @staticmethod
     def from_data(data, cliques):
-        from src.mbi import Factor
+        from src_for_proxy_mutual_information_mst.mbi import Factor
         ans = {}
         for cl in cliques:
             mu = data.project(cl)

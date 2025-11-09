@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import os
 import json
-from src.mbi import Domain
+from src_for_proxy_mutual_information_mst.mbi import Domain
 
 class Dataset:
     def __init__(self, df, domain, weights=None):

@@ -8,7 +8,7 @@ from scipy import sparse
 from sklearn.preprocessing import LabelEncoder
 
 from mechanisms.cdp2adp import cdp_rho
-from src.mbi import FactoredInference, Dataset, Domain
+from src_for_proxy_mutual_information_mst.mbi import FactoredInference, Dataset, Domain
 
 """
 This is a generalization of the winning mechanism from the 
