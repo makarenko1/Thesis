@@ -31,9 +31,9 @@ class TupleContribution:
         If epsilon is given, Laplace noise is added for privacy.
         Prints a short summary and returns the resulting contribution value.
         """
-        start = time.time()
+        start_time = time.time()
 
-        contribution = 0
+        contribution = 0.0
         if k is None:
             k = len(self.dataset)
         min_a_count = None
@@ -50,17 +50,13 @@ class TupleContribution:
                 temp = int(df[admissible_col].value_counts().min())
                 min_a_count = min(min_a_count, temp) if min_a_count is not None else temp
 
-
-
             if k is None:
                 k = len(df)
 
             if admissible_col is None:
-                values = self._calculate_unconditional_helper(df[protected_col].to_numpy(),
-                                                              df[response_col].to_numpy())
+                values = self._calculate_unconditional_helper(df[protected_col].to_numpy(), df[response_col].to_numpy())
             else:
-                values = self._calculate_conditional_helper(df[protected_col].to_numpy(),
-                                                            df[response_col].to_numpy(),
+                values = self._calculate_conditional_helper(df[protected_col].to_numpy(), df[response_col].to_numpy(),
                                                             df[admissible_col].to_numpy())
 
             top_k = sorted(values, reverse=True)[:min(k, len(values))]
@@ -68,24 +64,29 @@ class TupleContribution:
 
         if epsilon is not None:
             if min_a_count is not None and min_a_count > 1:
-                sensitivity = (3 * k / (min_a_count - 1)) + 2
+                sensitivity = len(fairness_criteria) * ((3 * k / (min_a_count - 1)) + 2)
             else:
                 n = len(self.dataset)
-                sensitivity = (3 * k / n) + 2
+                sensitivity = len(fairness_criteria) * ((3 * k / n) + 2)
             contribution = contribution + np.random.laplace(loc=0.0, scale=sensitivity / float(epsilon))
 
-        elapsed = time.time() - start
-        print(f"Residual AUC (approximation): {contribution:.4f} "
-              f"({'conditional' if min_a_count is not None else 'unconditional'}) "
-              f"computed in {elapsed:.3f}s on {len(self.dataset)} rows.")
+        elapsed_time = time.time() - start_time
+        print(f"Tuple Contribution for fairness criteria {fairness_criteria}: {contribution:.4f} with epsilon: "
+              f"{epsilon if epsilon is not None else 'infinity'}. Calculation took {elapsed_time:.3f} seconds.")
         return contribution
 
     @staticmethod
     def _encode_and_clean(df, cols):
         """
-        Clean selected columns by dropping missing values and
-        label-encoding categorical values into integers.
-        Returns a cleaned DataFrame copy.
+        Cleans and label-encode selected columns.
+
+        Drops rows with missing values and converts categorical entries
+        into integer codes for the specified columns.
+
+        Returns
+        -------
+        pandas.DataFrame
+            A cleaned and encoded copy of the input data.
         """
         df = df.replace(["NA", "N/A", ""], pd.NA).dropna(subset=cols).copy()
         for c in cols:
@@ -93,19 +94,19 @@ class TupleContribution:
         return df
 
     @staticmethod
-    def _calculate_unconditional_helper(protected_col, response_col):
+    def _calculate_unconditional_helper(protected_col_values, response_col_values):
         """
         Compute unsigned marginal differences for all observed (S,O) pairs:
             MD(s,o) = |P(S,O) − P(S)P(O)|
         Returns MD values for unique tuples.
         """
-        protected_col = np.asarray(protected_col, dtype=np.int64)
-        response_col = np.asarray(response_col, dtype=np.int64)
-        n_protected, n_response = protected_col.max() + 1, response_col.max() + 1
-        N = len(protected_col)
+        protected_col_values = np.asarray(protected_col_values, dtype=np.int64)
+        response_col_values = np.asarray(response_col_values, dtype=np.int64)
+        n_protected, n_response = protected_col_values.max() + 1, response_col_values.max() + 1
+        N = len(protected_col_values)
 
-        flat = protected_col * n_response + response_col
-        C = np.bincount(flat, minlength=n_protected * n_response).reshape(n_protected, n_response).astype(float)  # counts
+        flat = protected_col_values * n_response + response_col_values
+        C = np.bincount(flat, minlength=n_protected * n_response).reshape(n_protected, n_response).astype(float)# counts
         p_protected_response = C / N
         p_protected = p_protected_response.sum(axis=1, keepdims=True)  # [n_protected,1]
         p_response = p_protected_response.sum(axis=0, keepdims=True)   # [1,n_response]
@@ -116,19 +117,19 @@ class TupleContribution:
         return MD[protected_idx, response_idx]
 
     @staticmethod
-    def _calculate_conditional_helper(protected_col, response_col, admissible_col):
+    def _calculate_conditional_helper(protected_col_values, response_col_values, admissible_col_values):
         """
         Compute unsigned marginal differences for all observed (S,O,A) tuples:
             MD(s,o|a) = |P(S,O|A) − P(S|A)P(O|A)|
         Returns MD values for unique tuples.
         """
-        protected_col = np.asarray(protected_col, dtype=np.int64)
-        response_col = np.asarray(response_col, dtype=np.int64)
-        admissible_col = np.asarray(admissible_col, dtype=np.int64)
-        n_protected, n_response, n_admissible = (protected_col.max() + 1, response_col.max() + 1,
-                                                 admissible_col.max() + 1)
+        protected_col_values = np.asarray(protected_col_values, dtype=np.int64)
+        response_col_values = np.asarray(response_col_values, dtype=np.int64)
+        admissible_col_values = np.asarray(admissible_col_values, dtype=np.int64)
+        n_protected, n_response, n_admissible = (protected_col_values.max() + 1, response_col_values.max() + 1,
+                                                 admissible_col_values.max() + 1)
 
-        flat = admissible_col * (n_protected * n_response) + protected_col * n_response + response_col
+        flat = admissible_col_values * (n_protected * n_response) + protected_col_values * n_response + response_col_values
         C = np.bincount(flat, minlength=n_admissible * n_protected * n_response).reshape(
             n_admissible, n_protected, n_response).astype(float)  # counts per (a,s,o)
 

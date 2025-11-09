@@ -61,10 +61,8 @@ def create_plot_1():
         mi_scores, priv_scores_orig, priv_scores_offset, tvd_scores = [], [], [], []
         for s_col, o_col, a_col in attrs:
             mi_scores.append(MutualInformation(datapath=path).calculate(s_col, o_col, a_col))
-            priv_scores_orig.append(ProxyMutualInformationPrivbayes(datapath=path).calculate(
-                s_col, o_col, a_col, add_offset=False))
-            priv_scores_offset.append(ProxyMutualInformationPrivbayes(datapath=path).calculate(
-                s_col, o_col, a_col, add_offset=True))
+            priv_scores_orig.append(ProxyMutualInformationPrivbayes(datapath=path).calculate(s_col, o_col, a_col))
+            priv_scores_offset.append(ProxyMutualInformationPrivbayes(datapath=path).calculate(s_col, o_col, a_col))
             tvd_scores.append(ProxyMutualInformationTVD(datapath=path).calculate(s_col, o_col, a_col))
         vals["MI"][ds_name] = mi_scores
         vals["PRIV_ORIG"][ds_name] = priv_scores_orig

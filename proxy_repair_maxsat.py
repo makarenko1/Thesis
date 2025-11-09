@@ -9,54 +9,67 @@ from z3 import Bool, Or, Not, Optimize, sat
 
 class ProxyRepairMaxSat:
     """
-    This class approximates conditional mutual information using a MaxSAT-based proxy.
-    It does so by encoding constraints derived from multivalued dependencies (MVDs)
-    into a weighted MaxSAT problem and solving it using Z3's optimizer.
+    ProxyRepairMaxSat
+
+    Implementation of the proxy repair metric based on a MaxSAT formulation.
+    This version assumes that the protected, response, and admissible sets
+    each contain at most one attribute (a single column).
+
+    The method converts each fairness criterion into a set of logical
+    clauses (soft and hard) representing multivalued dependency (MVD)
+    constraints, then solves a weighted MaxSAT problem to estimate the
+    minimal data repair needed for fairness. Laplace noise can be added
+    for differential privacy.
     """
 
-    def __init__(self, datapath):
+    def __init__(self, datapath=None, data=None):
+        if (datapath is None and data is None) or (datapath is not None and data is not None):
+            raise ValueError("Usage: Should pass either datapath or data itself")
+        if datapath is not None:
+            self.dataset = pd.read_csv(datapath)
+        else:
+            self.dataset = data
+
+    def calculate(self, fairness_criteria, epsilon=None):
         """
-        Initializes the ProxyRepairMaxSat object by loading the dataset.
+        Computes the proxy repair measure using a MaxSAT solver.
 
-        Parameters:
-        -----------
-        datapath : str
-            Path to the CSV dataset file.
+        Each criterion is defined by two or three column names:
+          (protected, response) or (protected, response, admissible).
+
+        The method encodes tuples as Boolean variables, builds soft and hard
+        3-CNF clauses for each criterion, and solves the combined MaxSAT
+        optimization. The resulting repair value represents the number of
+        tuple changes required for fairness. If epsilon is given, Laplace
+        noise is added for privacy.
+
+        Returns
+        -------
+        float
+            The estimated repair value (possibly noised).
         """
-        self.dataset = pd.read_csv(datapath)
-
-    def calculate(self, s_col, o_col, a_col=None, epsilon=None):
-        """
-        Computes the MaxSAT-based proxy score for conditional dependence between s_col and o_col given a_col.
-
-        Parameters:
-        -----------
-        s_col : str
-            Name of the S attribute (e.g. sensitive).
-        o_col : str
-            Name of the O attribute (e.g. outcome).
-        a_col : str
-            Name of the A attribute (e.g. auxiliary/context variable).
-
-        Returns:
-        --------
-        int
-            The number of tuples violating multivalued dependency constraints.
-        """
-        self.dataset.replace(["NA", "N/A", ""], pd.NA, inplace=True)
-        cols = [s_col, o_col]
-        if a_col is not None:
-            cols += [a_col]
-        self.dataset.dropna(inplace=True, subset=cols)
-        for col in cols:
-            self.dataset[col] = LabelEncoder().fit_transform(self.dataset[col])
-
-        D = list(self.dataset[cols].itertuples(index=False, name=None))
-        D_shortened = list(set(D))
-
         start_time = time.time()
 
-        soft_clauses, hard_clauses, D_star = self._conversion_to_solving_general_3cnf(D_shortened, a_col)
+        soft_clauses = set()
+        hard_clauses = set()
+        D_star = set()
+
+        for criterion in fairness_criteria:
+            if len(criterion) not in [2, 3]:
+                raise ValueError("Invalid input")
+
+            protected_col, response_col, admissible_col = (criterion[0], criterion[1],
+                                                           None if len(criterion) == 2 else criterion[2])
+            cols = [protected_col, response_col] + ([admissible_col] if admissible_col is not None else [])
+            df = self._encode_and_clean(self.dataset, cols)
+            D = list(df[cols].itertuples(index=False, name=None))
+            D_shortened = list(set(D))
+
+            soft_clauses_for_criterion, hard_clauses_for_criterion, D_star_for_criterion = (
+                self._conversion_to_solving_general_3cnf(D_shortened, admissible_col))
+            soft_clauses = soft_clauses.union(soft_clauses_for_criterion)
+            hard_clauses = hard_clauses.union(hard_clauses_for_criterion)
+            D_star = D_star.union(D_star_for_criterion)
 
         opt = Optimize()
         # Add constraints to the optimizer
@@ -66,7 +79,7 @@ class ProxyRepairMaxSat:
             opt.add(clause)
 
         if opt.check() != sat:
-            print("No satisfying assignment found.")
+            print("No satisfying assignment found")
             return
 
         model = opt.model()
@@ -86,40 +99,60 @@ class ProxyRepairMaxSat:
             repair = repair + np.random.laplace(loc=0, scale=sensitivity / epsilon)
 
         elapsed_time = time.time() - start_time
-        print(f"Repair MaxSAT: The score for dependency '{s_col}' ⫫ '{o_col}'" +
-              (f" | {a_col}" if a_col is not None else "") + f" is: {repair}. "
-              f"Calculation took {elapsed_time:.3f} seconds.")
+        print(
+            f"Repair MaxSAT: Proxy Repair MaxSAT for fairness criteria {fairness_criteria}: "
+            f"{repair:.4f} with epsilon: {epsilon if epsilon is not None else 'infinity'}. "
+            f"Calculation took {elapsed_time:.3f} seconds."
+        )
         return repair
 
     @staticmethod
+    def _encode_and_clean(df, cols):
+        """
+        Cleans and label-encode selected columns.
+
+        Drops rows with missing values and converts categorical entries
+        into integer codes for the specified columns.
+
+        Returns
+        -------
+        pandas.DataFrame
+            A cleaned and encoded copy of the input data.
+        """
+        df = df.replace(["NA", "N/A", ""], pd.NA).dropna(subset=cols).copy()
+        for c in cols:
+            df[c] = LabelEncoder().fit_transform(df[c])
+        return df
+
+    @staticmethod
     def _clause_key(t1, t2, t3):
+        """
+        Generates a unique key for a clause defined by three tuples.
+
+        Used internally to avoid duplicate logical clauses.
+        """
         return tuple(sorted([f"x_{t1}", f"x_{t2}", f"x_{t3}"]))
 
     @staticmethod
-    def _conversion_to_solving_general_3cnf(D, a_col):
+    def _conversion_to_solving_general_3cnf(D, admissible_col):
         """
-        Constructs soft and hard clauses for the MaxSAT solver using the 3CNF encoding of MVD constraints.
+        Converts a dataset into a 3-CNF MaxSAT formulation.
 
-        Parameters:
-        -----------
-        D : np.ndarray
-            Tuples of s_col values, o_col values and a_col values.
-        a_col: Optional[str]
-            Name of the A attribute.
+        Constructs:
+          - D_star: the set of all tuple combinations satisfying MVD structure
+          - Soft clauses: one per tuple, encouraging consistency with the data
+          - Hard clauses: 3-CNF constraints enforcing fairness dependencies
 
-        Returns:
-        --------
+        Returns
+        -------
         tuple
-            soft_clauses : list
-                Soft clauses for optimization (encouraged but not required).
-            hard_clauses : list
-                Hard constraints encoding MVD-based 3CNF rules.
+            (soft_clauses, hard_clauses, D_star)
         """
-        soft_clauses = list()
+        soft_clauses = set()
         hard_clauses = set()
 
         # Step 1: Create D_star
-        if a_col is not None:
+        if admissible_col is not None:
             group_by_a = defaultdict(list)
             for s, o, a in D:
                 group_by_a[a].append((s, o))
@@ -140,13 +173,13 @@ class ProxyRepairMaxSat:
         for t in D_star:
             x_t = Bool(f"x_{t}")
             if t in D:
-                soft_clauses.append(x_t)
+                soft_clauses.add(x_t)
             else:
-                soft_clauses.append(Not(x_t))
+                soft_clauses.add(Not(x_t))
 
         # Step 3: Enforce MVD 3CNF constraints
         C = set()
-        if a_col is not None:
+        if admissible_col is not None:
             for (s1, o1, a1) in D_star:
                 for (s2, o2, a2) in D_star:
                     if a1 == a2 and s1 != s2 and o1 != o2:
@@ -159,7 +192,7 @@ class ProxyRepairMaxSat:
 
         used_keys = set()
         for t in C:
-            if a_col is not None:
+            if admissible_col is not None:
                 s1, o1, s2, o2, a = t
                 t1 = (s1, o1, a)
                 t2 = (s2, o2, a)

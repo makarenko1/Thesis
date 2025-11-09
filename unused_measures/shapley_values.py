@@ -274,8 +274,9 @@ class LayeredShapleyValues:
             D[i] = tuple(D[i])
 
         start_time = time.time()  # Record start time
-        full_tvd = ProxyMutualInformationTVD(data=pd.DataFrame(D, columns=[s_col, o_col, a_col])).calculate(
-            s_col, o_col, a_col)
+        full_tvd = ProxyMutualInformationTVD(data=pd.DataFrame(D, columns=[s_col, o_col, a_col])).calculate(s_col,
+                                                                                                            o_col,
+                                                                                                            a_col)
         candidates = self._get_relevant_tuples(D)
         candidates = list(set(candidates))
         avg_shapley_value_per_tuple = defaultdict(lambda: 0)
