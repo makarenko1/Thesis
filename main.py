@@ -1,6 +1,10 @@
+import time
+
 import numpy as np
+import pandas as pd
 from matplotlib import pyplot as plt
 
+from proxy_repair_maxsat import ProxyRepairMaxSat
 from tuple_contribution import TupleContribution
 from mutual_information import MutualInformation
 from proxy_mutual_information_tvd import ProxyMutualInformationTVD
@@ -254,8 +258,8 @@ def create_plot_2():
 
 ######################################### Experiments ##########################################
 
-adult_criteria = [["sex", "income", "education-num"], ["sex", "income", "hours-per-week"],
-                  ["race", "income", "education-num"], ["race", "income", "hours-per-week"]]
+adult_criteria = [["sex", "income>50K", "education-num"], ["sex", "income>50K", "hours-per-week"],
+                  ["race", "income>50K", "education-num"], ["race", "income>50K", "hours-per-week"]]
 
 stackoverflow_criteria = [["Country", "RemoteWork", "Employment"], ["Age", "PurchaseInfluence", "OrgSize"],
                           ["Country", "TechEndorse", "YearsCodePro"], ["Age", "BuyNewTool", "BuildvsBuy"]]
@@ -266,8 +270,96 @@ compas_criteria = [["race", "is_recid", "age_cat"], ["sex", "is_recid", "priors_
 healthcare_criteria = [["race", "complications", "age_group"], ["smoker", "complications", "age_group"],
                        ["race", "income", "county"], ["smoker", "income", "num_children"]]
 
-def run_experiment_1():
-    pass
+datasets = {
+    "adult": {
+        "path": "data/adult.csv",
+        "criteria": adult_criteria,
+    },
+    "stackoverflow": {
+        "path": "data/stackoverflow.csv",
+        "criteria": stackoverflow_criteria,
+    },
+    "compas": {
+        "path": "data/compas.csv",
+        "criteria": compas_criteria,
+    },
+    "healthcare": {
+        "path": "data/healthcare.csv",
+        "criteria": healthcare_criteria,
+    },
+}
+
+measures = {
+    "Mutual Information": MutualInformation,
+    "Proxy Mutual Information TVD": ProxyMutualInformationTVD,
+    "Proxy RepairMaxSat": ProxyRepairMaxSat,
+    "Tuple Contribution": TupleContribution,
+}
+
+def run_experiment_1(epsilon=None, repeats=10, n_points=7, n_min=200, save=True,
+                     outfile="plots/experiment1.png"):
+    def choose_sample_sizes(n_rows, n_points=7, n_min=200):
+        """Monotone sample sizes from ~n_min up to n_rows."""
+        n_min = max(1, min(n_min, n_rows))
+        sizes = np.unique(np.linspace(n_min, n_rows, num=n_points, dtype=int))
+        return sizes.tolist()
+
+    def run_runtime(measure_cls, df, criterion, sample_sizes, repeats=10, epsilon=None, seed=123):
+        """Average runtime (seconds) for each sample size, repeating on random samples of this size."""
+        rng = np.random.RandomState(seed)
+        times = []
+        for n in sample_sizes:
+            n = min(n, len(df))
+            reps = []
+            for r in range(repeats):
+                sample = df.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
+                m = measure_cls(data=sample)
+                t0 = time.time()
+                _ = m.calculate([criterion], epsilon=epsilon)  # run on ONE triplet
+                reps.append(time.time() - t0)
+            times.append(float(np.mean(reps)))
+        return times
+
+    def short_label(triplet):
+        p, r, a = triplet if len(triplet) == 3 else (triplet[0], triplet[1], None)
+        return f"{p}→{r}" + (f"|{a}" if a else "")
+
+    fig, axes = plt.subplots(4, 4, figsize=(18, 14), sharex=False, sharey=False)
+    measure_items = list(measures.items())  # 4 measures
+    dataset_items = list(datasets.items())  # 4 datasets
+
+    for i, (measure_name, measure_cls) in enumerate(measure_items):
+        for j, (ds_name, spec) in enumerate(dataset_items):
+            ax = axes[i, j]
+            df = pd.read_csv(spec["path"])
+            crits = spec["criteria"]
+            sample_sizes = choose_sample_sizes(len(df), n_points=n_points, n_min=n_min)
+
+            for crit in crits:  # one line per criterion
+                runtimes = run_runtime(
+                    measure_cls=measure_cls,
+                    df=df,
+                    criterion=crit,
+                    sample_sizes=sample_sizes,
+                    repeats=repeats,
+                    epsilon=epsilon,
+                )
+                ax.plot(sample_sizes, runtimes, marker="o", label=short_label(crit))
+
+            ax.set_title(f"{measure_name} — {ds_name}")
+            ax.set_xlabel("# tuples in sample")
+            ax.set_ylabel("runtime (s)")
+            ax.grid(True, linestyle="--", alpha=0.4)
+            ax.legend(fontsize=8)
+
+    fig.suptitle("Runtime vs Sample Size — 16 Subplots (4 measures × 4 datasets)", y=0.995)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.97])
+
+    if save:
+        plt.savefig(outfile, dpi=150)
+        print(f"Saved {outfile}")
+
+    plt.show()
 
 def run_experiment_2():
     pass
@@ -286,4 +378,4 @@ def run_experiment_5():
 if __name__ == "__main__":
     # create_plot_1()
     # create_plot_2()
-    pass
+    run_experiment_1()
