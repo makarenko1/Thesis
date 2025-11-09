@@ -1,7 +1,5 @@
-import pandas as pd
 import numpy as np
-from collections import defaultdict
-
+import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 
 

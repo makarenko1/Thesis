@@ -1,7 +1,7 @@
 import time
 
-from mechanisms.mst_unconditional import run_mst_unconditional
 from mechanisms.mst_conditional import run_mst_conditional
+from mechanisms.mst_unconditional import run_mst_unconditional
 
 
 class ProxyMutualInformationNistContest:
