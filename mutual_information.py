@@ -1,3 +1,4 @@
+import math
 import time
 
 import numpy as np
@@ -27,7 +28,7 @@ class MutualInformation:
         else:
             self.dataset = data
 
-    def calculate(self, s_col, o_col, a_col=None):
+    def calculate(self, s_col, o_col, a_col=None, epsilon=None):
         """
         Compute the Mutual Information (MI) between two columns, optionally conditioned on a third column.
 
@@ -56,9 +57,13 @@ class MutualInformation:
         # Compute mutual information
         start_time = time.time()  # Record start time
 
-        mi = self._getI(self.dataset[s_col].to_numpy(),
-                        self.dataset[o_col].to_numpy(),
-                        self.dataset[a_col].to_numpy() if a_col else None)
+        mi = self._calculate_helper(self.dataset[s_col].to_numpy(), self.dataset[o_col].to_numpy(),
+                                    self.dataset[a_col].to_numpy() if a_col else None)
+
+        if epsilon is not None:
+            n = len(self.dataset)
+            sensitivity = (2 / n) * math.log(n) + ((n - 1) / n) * math.log(n / (n - 1))
+            mi = mi + np.random.laplace(loc=0, scale=sensitivity / epsilon)
 
         end_time = time.time()  # Record end time
         elapsed_time = end_time - start_time
@@ -67,7 +72,7 @@ class MutualInformation:
               f" is: {mi:.4f}. Calculation took {elapsed_time:.3f} seconds.")
         return round(mi, 4)
 
-    def _getI(self, s_col_values, o_col_values, a_col_values=None):
+    def _calculate_helper(self, s_col_values, o_col_values, a_col_values=None):
         """
         Internal method to compute MI or CMI from label-encoded NumPy arrays.
 

@@ -56,22 +56,15 @@ class ProxyMutualInformationTVD:
         for col in cols:
             self.dataset[col] = LabelEncoder().fit_transform(self.dataset[col])
 
-        s_col_values = self.dataset[s_col]
-        o_col_values = self.dataset[o_col]
-        a_col_values = self.dataset[a_col]
-
         if a_col is None:
-            tvd = self._calculate_tvd_unconditional(s_col_values, o_col_values)
+            tvd = self._calculate_unconditional_helper(self.dataset[s_col].to_numpy(), self.dataset[o_col].to_numpy())
         else:
-            tvd = self._calculate_tvd_conditional(s_col_values, o_col_values, a_col_values)
+            tvd = self._calculate_conditional_helper(self.dataset[s_col].to_numpy(), self.dataset[o_col].to_numpy(),
+                                                     self.dataset[a_col].to_numpy())
 
         if epsilon is not None:
-            if a_col is None:
-                sensitivity = 6 / (len(s_col_values) + 1)
-            else:
-                unique, counts = np.unique(a_col_values, return_counts=True)
-                max_count = np.max(counts)
-                sensitivity = (2 / (len(s_col_values) + 1)) + (6 / (max_count + 1))
+            n = len(self.dataset)
+            sensitivity = 16 / n
             tvd = tvd + np.random.laplace(loc=0, scale=sensitivity / epsilon)
 
         elapsed_time = time.time() - start_time
@@ -83,7 +76,7 @@ class ProxyMutualInformationTVD:
         return round(tvd, 4)
 
     @staticmethod
-    def _calculate_tvd_unconditional(s_col_values, o_col_values):
+    def _calculate_unconditional_helper(s_col_values, o_col_values):
         """
         Computes unconditional TVD between P(S,O) and P(S)P(O)
 
@@ -110,7 +103,7 @@ class ProxyMutualInformationTVD:
         tvd = 0.5 * np.sum(np.abs(joint - expected))
         return 2 * tvd**2
 
-    def _calculate_tvd_conditional(self, s_col_values, o_col_values, a_col_values):
+    def _calculate_conditional_helper(self, s_col_values, o_col_values, a_col_values):
         """
         Computes conditional TVD as the expected TVD over each group of A=a.
 
@@ -134,6 +127,6 @@ class ProxyMutualInformationTVD:
             if len(s_sub) == 0:
                 continue
             weight = len(s_sub) / total
-            tvd_total += weight * self._calculate_tvd_unconditional(s_sub, o_sub)
+            tvd_total += weight * self._calculate_unconditional_helper(s_sub, o_sub)
 
         return tvd_total

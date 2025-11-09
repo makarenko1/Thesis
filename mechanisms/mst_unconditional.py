@@ -119,7 +119,6 @@ def reverse_data(data, supports):
 
 
 def run_mst_unconditional(dataset, domain, s_col, o_col):
-
     data = Dataset.load(dataset, domain)
     data.df.replace(["NA", "N/A", ""], pd.NA, inplace=True)
     data.df.dropna(inplace=True, subset=[s_col, o_col], how="any", ignore_index=True, axis=0)

@@ -1,6 +1,7 @@
 import time
 from collections import defaultdict
 
+import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 from z3 import Bool, Or, Not, Optimize, sat
@@ -24,7 +25,7 @@ class ProxyRepairMaxSat:
         """
         self.dataset = pd.read_csv(datapath)
 
-    def calculate(self, s_col, o_col, a_col=None):
+    def calculate(self, s_col, o_col, a_col=None, epsilon=None):
         """
         Computes the MaxSAT-based proxy score for conditional dependence between s_col and o_col given a_col.
 
@@ -55,7 +56,7 @@ class ProxyRepairMaxSat:
 
         start_time = time.time()
 
-        soft_clauses, hard_clauses, D_star = self.conversion_to_solving_general_3cnf(D_shortened, a_col)
+        soft_clauses, hard_clauses, D_star = self._conversion_to_solving_general_3cnf(D_shortened, a_col)
 
         opt = Optimize()
         # Add constraints to the optimizer
@@ -76,22 +77,26 @@ class ProxyRepairMaxSat:
             if model.evaluate(Bool(f"x_{t}")):
                 DR.add(t)
 
-        # UR = number of mismatched tuples
+        # repair = number of mismatched tuples
         list_symmetric_difference = [row for row in D if row not in DR] + [row for row in DR if row not in D]
-        UR = len(list_symmetric_difference)
+        repair = len(list_symmetric_difference)
+
+        if epsilon is not None:
+            sensitivity = 2
+            repair = repair + np.random.laplace(loc=0, scale=sensitivity / epsilon)
 
         elapsed_time = time.time() - start_time
         print(f"Repair MaxSAT: The score for dependency '{s_col}' ⫫ '{o_col}'" +
-              (f" | {a_col}" if a_col is not None else "") + f" is: {UR}. "
+              (f" | {a_col}" if a_col is not None else "") + f" is: {repair}. "
               f"Calculation took {elapsed_time:.3f} seconds.")
-        return UR
+        return repair
 
     @staticmethod
-    def clause_key(t1, t2, t3):
+    def _clause_key(t1, t2, t3):
         return tuple(sorted([f"x_{t1}", f"x_{t2}", f"x_{t3}"]))
 
     @staticmethod
-    def conversion_to_solving_general_3cnf(D, a_col):
+    def _conversion_to_solving_general_3cnf(D, a_col):
         """
         Constructs soft and hard clauses for the MaxSAT solver using the 3CNF encoding of MVD constraints.
 
@@ -167,8 +172,8 @@ class ProxyRepairMaxSat:
             x_t1 = Bool(f"x_{t1}")
             x_t2 = Bool(f"x_{t2}")
             x_t3 = Bool(f"x_{t3}")
-            key = ProxyRepairMaxSat.clause_key(t1, t2, t3)
-            if key not in used_keys and ProxyRepairMaxSat.clause_key(t2, t1, t3) not in used_keys:
+            key = ProxyRepairMaxSat._clause_key(t1, t2, t3)
+            if key not in used_keys and ProxyRepairMaxSat._clause_key(t2, t1, t3) not in used_keys:
                 hard_clauses.add(Or(Not(x_t1), Not(x_t2), x_t3))
                 used_keys.add(key)
 

@@ -25,6 +25,44 @@ class ResidualAUCMeasure:
             raise Exception("Usage: pass exactly one of datapath or data")
         self.dataset = pd.read_csv(datapath) if datapath is not None else data.copy()
 
+    def calculate(self, s_col, o_col, a_col=None, k=None, epsilon=None):
+        """
+        Compute the residual AUC. If `a_col` is provided, uses conditional residuals R_{s,o,a};
+        otherwise uses unconditional residuals R_{s,o}.
+
+        Returns
+        -------
+        float : AUC in [0,1]
+        """
+        start = time.time()
+
+        cols = [s_col, o_col] + ([a_col] if a_col is not None else [])
+        self.dataset = self._encode_and_clean(self.dataset, cols)
+        if k is None:
+            k = len(self.dataset)
+
+        if a_col is None:
+            tuples, values, counts = self._calculate_unconditional_helper(self.dataset[s_col].to_numpy(),
+                                                                          self.dataset[o_col].to_numpy())
+        else:
+            tuples, values, counts = self._calculate_conditional_helper(self.dataset[s_col].to_numpy(),
+                                                                        self.dataset[o_col].to_numpy(),
+                                                                        self.dataset[a_col].to_numpy())
+
+        top_k = sorted(values, reverse=True)[:min(k, len(values))]
+        contribution = float(np.sum(top_k))
+
+        if epsilon is not None:
+            min_a = min([self.dataset[a_col].count(a_val) for a_val in set(self.dataset[a_col])])
+            sensitivity = (3 * k / (min_a - 1)) + 2
+            contribution = contribution + np.random.laplace(loc=0, scale=sensitivity / epsilon)
+
+        elapsed = time.time() - start
+        print(f"Residual AUC (approximation): {contribution:.4f} "
+              f"({'conditional' if a_col is not None else 'unconditional'}) "
+              f"computed in {elapsed:.3f}s on {len(self.dataset)} rows.")
+        return contribution
+
     @staticmethod
     def _encode_and_clean(df, cols):
         df = df.replace(["NA", "N/A", ""], pd.NA).dropna(subset=cols).copy()
@@ -33,7 +71,7 @@ class ResidualAUCMeasure:
         return df
 
     @staticmethod
-    def _residuals_unconditional(S, O):
+    def _calculate_unconditional_helper(S, O):
         """
         Returns (tuples, residual_values, multiplicities) for the unconditional case.
         tuples are (s, o)
@@ -58,17 +96,17 @@ class ResidualAUCMeasure:
         return tuples, values, counts
 
     @staticmethod
-    def _residuals_conditional(S, O, A):
+    def _calculate_conditional_helper(s_col, o_col, a_col):
         """
         Returns (tuples, residual_values, multiplicities) for the conditional case.
         tuples are (s, o, a)
         """
-        S = np.asarray(S, dtype=np.int64)
-        O = np.asarray(O, dtype=np.int64)
-        A = np.asarray(A, dtype=np.int64)
-        nS, nO, nA = S.max() + 1, O.max() + 1, A.max() + 1
+        s_col = np.asarray(s_col, dtype=np.int64)
+        o_col = np.asarray(o_col, dtype=np.int64)
+        a_col = np.asarray(a_col, dtype=np.int64)
+        nS, nO, nA = s_col.max() + 1, o_col.max() + 1, a_col.max() + 1
 
-        flat = A * (nS * nO) + S * nO + O
+        flat = a_col * (nS * nO) + s_col * nO + o_col
         C = np.bincount(flat, minlength=nA * nS * nO).reshape(nA, nS, nO).astype(float)  # counts per (a,s,o)
 
         Na = C.sum(axis=(1, 2))                                # total per a
@@ -86,65 +124,3 @@ class ResidualAUCMeasure:
         values = R[a_idx, s_idx, o_idx]
         counts = C[a_idx, s_idx, o_idx]                         # multiplicity for each unique (s,o,a)
         return tuples, values, counts
-
-    @staticmethod
-    def _safe_filepath(stem: str, folder: str = "plots", suffix: str = ".png") -> str:
-        # Replace any character that’s not alphanumeric, underscore, dot, or dash with underscore
-        safe_stem = re.sub(r'[<>:"/\\|?*]', "_", stem)
-        Path(folder).mkdir(parents=True, exist_ok=True)
-        return str(Path(folder) / f"{safe_stem}{suffix}")
-
-    @staticmethod
-    def _plot_residuals(values, title=None, savepath=None):
-        """
-        Plot Shapley values (sorted, no x tick labels, no cumulative).
-        X-axis: record index after sorting (0..N-1)
-        Y-axis: Shapley value
-        """
-        if values.size == 0:
-            return
-        v_sorted = np.sort(values)[::-1]  # largest first
-        plt.figure(figsize=(7, 4))
-        plt.scatter(range(len(v_sorted)), v_sorted)
-        plt.ylabel("Residual value")
-        if title:
-            plt.title(title)
-        # no x tick labels
-        plt.xticks([])
-        plt.tight_layout()
-        if savepath:
-            plt.savefig(ResidualAUCMeasure._safe_filepath(savepath), dpi=120)
-
-    def calculate(self, s_col, o_col, a_col=None, plot=False):
-        """
-        Compute the residual AUC. If `a_col` is provided, uses conditional residuals R_{s,o,a};
-        otherwise uses unconditional residuals R_{s,o}.
-
-        Returns
-        -------
-        float : AUC in [0,1]
-        """
-        start = time.time()
-
-        cols = [s_col, o_col] + ([a_col] if a_col is not None else [])
-        df = self._encode_and_clean(self.dataset, cols)
-
-        if a_col is None:
-            tuples, values, counts = self._residuals_unconditional(df[s_col].values,
-                                                                   df[o_col].values)
-        else:
-            tuples, values, counts = self._residuals_conditional(df[s_col].values,
-                                                                 df[o_col].values,
-                                                                 df[a_col].values)
-
-        auc_approximation = float(np.sum(values * counts))
-
-        if plot:
-            ResidualAUCMeasure._plot_residuals(values, title=f"Residuals for {s_col}, {o_col} | {a_col}",
-                                               savepath=f"residuals_{s_col}_{o_col}_{a_col}")
-
-        elapsed = time.time() - start
-        print(f"Residual AUC (approximation): {auc_approximation:.4f} "
-              f"({'conditional' if a_col is not None else 'unconditional'}) "
-              f"computed in {elapsed:.3f}s on {len(df)} rows.")
-        return auc_approximation
