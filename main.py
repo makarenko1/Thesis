@@ -388,7 +388,7 @@ def run_experiment_1(
         ax.grid(True, linestyle="--", alpha=0.4)
         ax.legend()
 
-    fig.suptitle("Runtime vs. Sample Size — one subplot per dataset, one line per measure", y=1.02)
+    fig.suptitle("Runtime as function of Sample Size", y=1.02)
     fig.tight_layout()
 
     if save:
@@ -399,16 +399,94 @@ def run_experiment_1(
 
     plt.show()
 
-def run_experiment_2():
-    pass
+def run_experiment_2(
+    epsilons=(0.05, 0.1, 0.2, 0.5, 1.0, 2.0),
+    repeats=5,
+    save=True,
+    outfile="plots/experiment2.png"
+):
+    """
+    Experiment 2:
+    For each dataset (subplot) and each measure (line),
+    plot relative L1 error vs privacy budget epsilon.
+
+    Relative L1 error is |X - Y| / |Y|,
+    where X = private metric output at epsilon,
+          Y = non-private baseline (epsilon=None).
+    We average across `repeats` (for DP noise) and across all 4 criteria.
+    """
+
+    # Safe division helper
+    def rel_error(x, y, tiny=1e-12):
+        denom = max(abs(y), tiny)
+        return abs(x - y) / denom
+
+    # Big fonts
+    plt.rcParams.update({
+        "axes.titlesize": 16,
+        "axes.labelsize": 14,
+        "xtick.labelsize": 12,
+        "ytick.labelsize": 12,
+        "legend.fontsize": 12,
+        "figure.titlesize": 18,
+    })
+
+    fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
+    if not isinstance(axes, np.ndarray):
+        axes = np.array([axes])
+
+    for ax, (ds_name, spec) in zip(axes, datasets.items()):
+        df = pd.read_csv(spec["path"])
+        criteria = spec["criteria"]
+
+        # Pre-compute NON-PRIVATE baselines per criterion (epsilon=None)
+        baselines = []
+        for measure_name, measure_cls in measures.items():
+            # Baseline Y for each criterion with the *full dataset*
+            Y = []
+            for crit in criteria:
+                m = measure_cls(data=df)
+                y_val = m.calculate([crit], epsilon=None)
+                Y.append(float(y_val))
+            baselines.append((measure_name, np.array(Y, dtype=float)))
+
+        # One line per measure
+        for (measure_name, measure_cls), (_, Y_vec) in zip(measures.items(), baselines):
+            rel_errors_for_eps = []
+            for eps in epsilons:
+                # Average over repeats and criteria
+                crit_means = []
+                for crit_idx, crit in enumerate(criteria):
+                    y = Y_vec[crit_idx]
+                    # Repeat due to DP noise
+                    reps = []
+                    for r in range(repeats):
+                        m = measure_cls(data=df)
+                        x = float(m.calculate([crit], epsilon=eps))
+                        reps.append(rel_error(x, y))
+                    crit_means.append(float(np.mean(reps)))
+                rel_errors_for_eps.append(float(np.mean(crit_means)))
+
+            ax.plot(epsilons, rel_errors_for_eps, marker="o", linewidth=2, label=measure_name)
+
+        ax.set_title(ds_name)
+        ax.set_xlabel("privacy budget ε")
+        ax.set_ylabel("relative L1 error |X−Y|/|Y|")
+        ax.grid(True, linestyle="--", alpha=0.4)
+        ax.legend()
+
+    fig.suptitle("Relative L1 Error as function of Privacy Budget", y=1.02)
+    fig.tight_layout()
+
+    if save:
+        import os
+        os.makedirs(os.path.dirname(outfile), exist_ok=True)
+        plt.savefig(outfile, dpi=180, bbox_inches="tight")
+        print(f"Saved {outfile}")
+
+    plt.show()
 
 def run_experiment_3():
-    pass
-
-def run_experiment_4():
-    pass
-
-def run_experiment_5():
     pass
 
 
@@ -417,3 +495,4 @@ if __name__ == "__main__":
     # create_plot_1()
     # create_plot_2()
     run_experiment_1()
+    run_experiment_2()
