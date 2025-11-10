@@ -261,8 +261,11 @@ def create_plot_2():
 adult_criteria = [["sex", "income>50K", "education-num"], ["sex", "income>50K", "hours-per-week"],
                   ["race", "income>50K", "education-num"], ["race", "income>50K", "hours-per-week"]]
 
+census_criteria = [["HEALTH", "INCTOT", "EDUC"], ["HEALTH", "OCC", "EDUC"], ["HEALTH", "MARST", "AGE"],
+                   ["HEALTH", "INCTOT", "AGE"]]
+
 stackoverflow_criteria = [["Country", "RemoteWork", "Employment"], ["Age", "PurchaseInfluence", "OrgSize"],
-                          ["Country", "TechEndorse", "YearsCodePro"], ["Age", "BuyNewTool", "BuildvsBuy"]]
+                          ["Country", "DevType", "YearsCodePro"], ["Age", "BuyNewTool", "BuildvsBuy"]]
 
 compas_criteria = [["race", "is_recid", "age_cat"], ["sex", "is_recid", "priors_count"],
                    ["race", "decile_score", "c_charge_degree"], ["sex", "v_decile_score", "age_cat"]]
@@ -271,19 +274,23 @@ healthcare_criteria = [["race", "complications", "age_group"], ["smoker", "compl
                        ["race", "income", "county"], ["smoker", "income", "num_children"]]
 
 datasets = {
-    "adult": {
+    "Adult": {
         "path": "data/adult.csv",
         "criteria": adult_criteria,
     },
-    "stackoverflow": {
+    "IPUMS-CPS": {
+        "path": "data/census.csv",
+        "criteria": census_criteria,
+    },
+    "Stackoverflow": {
         "path": "data/stackoverflow.csv",
         "criteria": stackoverflow_criteria,
     },
-    "compas": {
+    "Compas": {
         "path": "data/compas.csv",
         "criteria": compas_criteria,
     },
-    "healthcare": {
+    "Healthcare": {
         "path": "data/healthcare.csv",
         "criteria": healthcare_criteria,
     },
@@ -296,67 +303,98 @@ measures = {
     "Tuple Contribution": TupleContribution,
 }
 
-def run_experiment_1(epsilon=None, repeats=10, n_points=7, n_min=200, save=True,
-                     outfile="plots/experiment1.png"):
-    def choose_sample_sizes(n_rows, n_points=7, n_min=200):
-        """Monotone sample sizes from ~n_min up to n_rows."""
-        n_min = max(1, min(n_min, n_rows))
-        sizes = np.unique(np.linspace(n_min, n_rows, num=n_points, dtype=int))
-        return sizes.tolist()
+def run_experiment_1(
+    epsilon=None,
+    repeats=5,
+    save=True,
+    outfile="plots/experiment1.png"
+):
+    """
+    Produces a single figure with 5 subplots in one row: one subplot per dataset.
+    Each subplot shows 4 lines (one per measure) of runtime vs. provided sample sizes.
+    For each dataset/measure/sample size, runtime is averaged over `repeats` random samples
+    and averaged across all 4 criteria of that dataset.
+    """
 
-    def run_runtime(measure_cls, df, criterion, sample_sizes, repeats=10, epsilon=None, seed=123):
-        """Average runtime (seconds) for each sample size, repeating on random samples of this size."""
+    # Provided sample sizes per dataset (keys mapped to our datasets dict)
+    sample_sizes_per_dataset = {
+        "Adult": [1000, 5000, 10000, 15000, 30000],
+        "IPUMS-CPS": [5000, 10000, 100000, 300000, 500000],
+        "Stackoverflow": [5000, 10000, 20000, 40000, 60000],
+        "Compas": [1000, 1500, 3000, 7000, 10000],
+        "Healthcare": [100, 200, 400, 700, 1000],
+    }
+
+    def runtime_avg_over_repeats_and_criteria(measure_cls, df, criteria, sample_size, repeats=5, epsilon=None, seed=123):
+        """
+        For a given measure and dataset, compute average runtime at a sample size:
+        - repeat `repeats` times with different random samples,
+        - for each repetition, run the measure once per criterion,
+        - average runtime across repetitions and across all criteria.
+        """
         rng = np.random.RandomState(seed)
-        times = []
-        for n in sample_sizes:
-            n = min(n, len(df))
-            reps = []
+        # collect times per criterion, then average across criteria
+        crit_times = []
+        for crit in criteria:
+            rep_times = []
             for r in range(repeats):
+                n = min(sample_size, len(df))
                 sample = df.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
                 m = measure_cls(data=sample)
                 t0 = time.time()
-                _ = m.calculate([criterion], epsilon=epsilon)  # run on ONE triplet
-                reps.append(time.time() - t0)
-            times.append(float(np.mean(reps)))
-        return times
+                _ = m.calculate([crit], epsilon=epsilon)
+                rep_times.append(time.time() - t0)
+            crit_times.append(float(np.mean(rep_times)))
+        return float(np.mean(crit_times))
 
-    def short_label(triplet):
-        p, r, a = triplet if len(triplet) == 3 else (triplet[0], triplet[1], None)
-        return f"{p}→{r}" + (f"|{a}" if a else "")
+    # Big fonts
+    plt.rcParams.update({
+        "axes.titlesize": 16,
+        "axes.labelsize": 14,
+        "xtick.labelsize": 12,
+        "ytick.labelsize": 12,
+        "legend.fontsize": 12,
+        "figure.titlesize": 18,
+    })
 
-    fig, axes = plt.subplots(4, 4, figsize=(18, 14), sharex=False, sharey=False)
-    measure_items = list(measures.items())  # 4 measures
-    dataset_items = list(datasets.items())  # 4 datasets
+    fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
+    if not isinstance(axes, np.ndarray):
+        axes = np.array([axes])
 
-    for i, (measure_name, measure_cls) in enumerate(measure_items):
-        for j, (ds_name, spec) in enumerate(dataset_items):
-            ax = axes[i, j]
-            df = pd.read_csv(spec["path"])
-            crits = spec["criteria"]
-            sample_sizes = choose_sample_sizes(len(df), n_points=n_points, n_min=n_min)
+    for ax, (ds_name, spec) in zip(axes, datasets.items()):
+        df = pd.read_csv(spec["path"])
+        criteria = spec["criteria"]
+        sample_sizes = sample_sizes_per_dataset[ds_name]
 
-            for crit in crits:  # one line per criterion
-                runtimes = run_runtime(
+        # one line per measure
+        for measure_name, measure_cls in measures.items():
+            runtimes = []
+            for n in sample_sizes:
+                t = runtime_avg_over_repeats_and_criteria(
                     measure_cls=measure_cls,
                     df=df,
-                    criterion=crit,
-                    sample_sizes=sample_sizes,
+                    criteria=criteria,
+                    sample_size=n,
                     repeats=repeats,
                     epsilon=epsilon,
                 )
-                ax.plot(sample_sizes, runtimes, marker="o", label=short_label(crit))
+                runtimes.append(t)
 
-            ax.set_title(f"{measure_name} — {ds_name}")
-            ax.set_xlabel("# tuples in sample")
-            ax.set_ylabel("runtime (s)")
-            ax.grid(True, linestyle="--", alpha=0.4)
-            ax.legend(fontsize=8)
+            ax.plot(sample_sizes, runtimes, marker="o", linewidth=2, label=measure_name)
 
-    fig.suptitle("Runtime vs Sample Size — 16 Subplots (4 measures × 4 datasets)", y=0.995)
-    fig.tight_layout(rect=[0, 0.03, 1, 0.97])
+        ax.set_title(ds_name)
+        ax.set_xlabel("number of tuples (sample size)")
+        ax.set_ylabel("runtime (s)")
+        ax.grid(True, linestyle="--", alpha=0.4)
+        ax.legend()
+
+    fig.suptitle("Runtime vs. Sample Size — one subplot per dataset, one line per measure", y=1.02)
+    fig.tight_layout()
 
     if save:
-        plt.savefig(outfile, dpi=150)
+        import os
+        os.makedirs(os.path.dirname(outfile), exist_ok=True)
+        plt.savefig(outfile, dpi=180, bbox_inches="tight")
         print(f"Saved {outfile}")
 
     plt.show()
