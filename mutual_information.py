@@ -27,7 +27,7 @@ class MutualInformation:
         else:
             self.dataset = data
 
-    def calculate(self, fairness_criteria, epsilon=None):
+    def calculate(self, fairness_criteria, epsilon=None, encode_and_clean=False):
         """
         Compute mutual information for a list of fairness criteria.
 
@@ -53,7 +53,8 @@ class MutualInformation:
             protected_col, response_col, admissible_col = (criterion[0], criterion[1],
                                                            None if len(criterion) == 2 else criterion[2])
             cols = [protected_col, response_col] + ([admissible_col] if admissible_col is not None else [])
-            df = self._encode_and_clean(self.dataset, cols)
+            if encode_and_clean:
+                df = self._encode_and_clean(self.dataset, cols)
 
             mi += self._calculate_helper(df[protected_col].to_numpy(), df[response_col].to_numpy(),
                                          df[admissible_col].to_numpy() if admissible_col else None)

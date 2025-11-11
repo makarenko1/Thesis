@@ -30,7 +30,7 @@ class ProxyRepairMaxSat:
         else:
             self.dataset = data
 
-    def calculate(self, fairness_criteria, epsilon=None):
+    def calculate(self, fairness_criteria, epsilon=None, encode_and_clean=False):
         """
         Computes the proxy repair measure using a MaxSAT solver.
 
@@ -61,7 +61,8 @@ class ProxyRepairMaxSat:
             protected_col, response_col, admissible_col = (criterion[0], criterion[1],
                                                            None if len(criterion) == 2 else criterion[2])
             cols = [protected_col, response_col] + ([admissible_col] if admissible_col is not None else [])
-            df = self._encode_and_clean(self.dataset, cols)
+            if encode_and_clean:
+                df = self._encode_and_clean(self.dataset, cols)
             D = list(df[cols].itertuples(index=False, name=None))
             D_shortened = list(set(D))
 

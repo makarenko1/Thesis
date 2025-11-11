@@ -3,6 +3,7 @@ import time
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
+from sklearn.preprocessing import LabelEncoder
 
 from proxy_repair_maxsat import ProxyRepairMaxSat
 from tuple_contribution import TupleContribution
@@ -303,11 +304,30 @@ measures = {
     "Tuple Contribution": TupleContribution,
 }
 
+def _encode_and_clean(data_path, cols):
+    """
+    Cleans and label-encode selected columns.
+
+    Drops rows with missing values and converts categorical entries
+    into integer codes for the specified columns.
+
+    Returns
+    -------
+    pandas.DataFrame
+        A cleaned and encoded copy of the input data.
+    """
+    df = pd.read_csv(data_path)
+    df = df.replace(["NA", "N/A", ""], pd.NA).dropna(subset=cols).copy()
+    for c in cols:
+        df[c] = LabelEncoder().fit_transform(df[c])
+    return df
+
 def run_experiment_1(
     epsilon=None,
-    repeats=5,
+    repeats=3,
     save=True,
-    outfile="plots/experiment1.png"
+    outfile="plots/experiment1.png",
+    seed=123
 ):
     """
     Produces a single figure with 5 subplots in one row: one subplot per dataset.
@@ -316,7 +336,6 @@ def run_experiment_1(
     and averaged across all 4 criteria of that dataset.
     """
 
-    # Provided sample sizes per dataset (keys mapped to our datasets dict)
     sample_sizes_per_dataset = {
         "Adult": [1000, 5000, 10000, 15000, 30000],
         "IPUMS-CPS": [5000, 10000, 100000, 300000, 500000],
@@ -325,7 +344,8 @@ def run_experiment_1(
         "Healthcare": [100, 200, 400, 700, 1000],
     }
 
-    def runtime_avg_over_repeats_and_criteria(measure_cls, df, criteria, sample_size, repeats=5, epsilon=None, seed=123):
+    def _runtime_avg_over_repeats_and_criteria(measure_cls, data, criteria, sample_size, repeats=repeats,
+                                               epsilon=epsilon, seed=seed):
         """
         For a given measure and dataset, compute average runtime at a sample size:
         - repeat `repeats` times with different random samples,
@@ -338,8 +358,8 @@ def run_experiment_1(
         for crit in criteria:
             rep_times = []
             for r in range(repeats):
-                n = min(sample_size, len(df))
-                sample = df.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
+                n = min(sample_size, len(data))
+                sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
                 m = measure_cls(data=sample)
                 t0 = time.time()
                 _ = m.calculate([crit], epsilon=epsilon)
@@ -362,27 +382,22 @@ def run_experiment_1(
         axes = np.array([axes])
 
     for ax, (ds_name, spec) in zip(axes, datasets.items()):
-        df = pd.read_csv(spec["path"])
+        path = spec["path"]
         criteria = spec["criteria"]
-        sample_sizes = sample_sizes_per_dataset[ds_name]
+        sample_sizes = sample_sizes_per_dataset[path]
+        data = _encode_and_clean(path, criteria[0])
 
         # one line per measure
         for measure_name, measure_cls in measures.items():
             runtimes = []
             for n in sample_sizes:
-                t = runtime_avg_over_repeats_and_criteria(
-                    measure_cls=measure_cls,
-                    df=df,
-                    criteria=criteria,
-                    sample_size=n,
-                    repeats=repeats,
-                    epsilon=epsilon,
-                )
+                t = _runtime_avg_over_repeats_and_criteria(measure_cls=measure_cls, data=data, criteria=criteria,
+                                                           sample_size=n, repeats=repeats, epsilon=epsilon)
                 runtimes.append(t)
 
             ax.plot(sample_sizes, runtimes, marker="o", linewidth=2, label=measure_name)
 
-        ax.set_title(ds_name)
+        ax.set_title(path)
         ax.set_xlabel("number of tuples (sample size)")
         ax.set_ylabel("runtime (s)")
         ax.grid(True, linestyle="--", alpha=0.4)
@@ -401,9 +416,11 @@ def run_experiment_1(
 
 def run_experiment_2(
     epsilons=(0.05, 0.1, 0.2, 0.5, 1.0, 2.0),
-    repeats=5,
+    sample_size=1000,
+    repeats=3,
     save=True,
-    outfile="plots/experiment2.png"
+    outfile="plots/experiment2.png",
+    seed=123
 ):
     """
     Experiment 2:
@@ -417,7 +434,7 @@ def run_experiment_2(
     """
 
     # Safe division helper
-    def rel_error(x, y, tiny=1e-12):
+    def _rel_error(x, y, tiny=1e-12):
         denom = max(abs(y), tiny)
         return abs(x - y) / denom
 
@@ -436,8 +453,11 @@ def run_experiment_2(
         axes = np.array([axes])
 
     for ax, (ds_name, spec) in zip(axes, datasets.items()):
-        df = pd.read_csv(spec["path"])
+        rng = np.random.RandomState(seed)
+        path = spec["path"]
         criteria = spec["criteria"]
+        data = _encode_and_clean(path, criteria[0])
+        sample = data.sample(n=sample_size, replace=False, random_state=rng.randint(0, 1_000_000))
 
         # Pre-compute NON-PRIVATE baselines per criterion (epsilon=None)
         baselines = []
@@ -445,7 +465,7 @@ def run_experiment_2(
             # Baseline Y for each criterion with the *full dataset*
             Y = []
             for crit in criteria:
-                m = measure_cls(data=df)
+                m = measure_cls(data=sample)
                 y_val = m.calculate([crit], epsilon=None)
                 Y.append(float(y_val))
             baselines.append((measure_name, np.array(Y, dtype=float)))
@@ -461,9 +481,9 @@ def run_experiment_2(
                     # Repeat due to DP noise
                     reps = []
                     for r in range(repeats):
-                        m = measure_cls(data=df)
+                        m = measure_cls(data=sample)
                         x = float(m.calculate([crit], epsilon=eps))
-                        reps.append(rel_error(x, y))
+                        reps.append(_rel_error(x, y))
                     crit_means.append(float(np.mean(reps)))
                 rel_errors_for_eps.append(float(np.mean(crit_means)))
 

@@ -21,7 +21,7 @@ class TupleContribution:
             raise ValueError("Usage: pass exactly one of datapath or data")
         self.dataset = pd.read_csv(datapath) if datapath is not None else data.copy()
 
-    def calculate(self, fairness_criteria, k=None, epsilon=None):
+    def calculate(self, fairness_criteria, k=None, epsilon=None, encode_and_clean=False):
         """
         Compute the top-k unsigned marginal differences for each fairness criterion.
 
@@ -45,7 +45,8 @@ class TupleContribution:
             protected_col, response_col, admissible_col = (criterion[0], criterion[1],
                                                            None if len(criterion) == 2 else criterion[2])
             cols = [protected_col, response_col] + ([admissible_col] if admissible_col is not None else [])
-            df = self._encode_and_clean(self.dataset, cols)
+            if encode_and_clean:
+                df = self._encode_and_clean(self.dataset, cols)
             if admissible_col is not None:
                 temp = int(df[admissible_col].value_counts().min())
                 min_a_count = min(min_a_count, temp) if min_a_count is not None else temp
