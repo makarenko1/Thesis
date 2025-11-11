@@ -368,6 +368,16 @@ def run_experiment_1(
             crit_times.append(np.nanmean(rep_times))
         return float(np.nanmean(crit_times))
 
+    def _add_unique_figure_legend(fig, axes, **kwargs):
+        """Collect legend entries across all axes, dedupe by label, and add one figure-level legend."""
+        seen = {}
+        for ax in np.ravel(axes):
+            handles, labels = ax.get_legend_handles_labels()
+            for h, lbl in zip(handles, labels):
+                if lbl and lbl not in seen:
+                    seen[lbl] = h
+        fig.legend(list(seen.values()), list(seen.keys()), **kwargs)
+
     plt.rcParams.update({
         "axes.titlesize": 16,
         "axes.labelsize": 14,
@@ -401,7 +411,14 @@ def run_experiment_1(
         ax.set_xlabel("number of tuples (sample size)")
         ax.set_ylabel("runtime (s)")
         ax.grid(True, linestyle="--", alpha=0.4)
-        ax.legend()
+
+    _add_unique_figure_legend(
+        fig, axes,
+        loc="upper center",
+        ncol=4,  # tweak as you like
+        title="Measure",
+        bbox_to_anchor=(0.5, 1.08)
+    )
 
     fig.suptitle("Runtime as function of Sample Size", y=1.02)
     fig.tight_layout()
@@ -416,7 +433,7 @@ def run_experiment_1(
 
 
 def run_experiment_2(
-    epsilons=(0.05, 0.1, 0.2, 0.5, 1.0, 2.0),
+    epsilons=(0.05, 0.1, 0.5, 1.0, 2.0),
     sample_size=300000,
     repeats=5,
     save=True,
@@ -426,6 +443,16 @@ def run_experiment_2(
     def _rel_error(x, y, tiny=1e-12):
         denom = max(abs(y), tiny)
         return abs(x - y) / denom
+
+    def _add_unique_figure_legend(fig, axes, **kwargs):
+        """Collect legend entries across all axes, dedupe by label, and add one figure-level legend."""
+        seen = {}
+        for ax in np.ravel(axes):
+            handles, labels = ax.get_legend_handles_labels()
+            for h, lbl in zip(handles, labels):
+                if lbl and lbl not in seen:
+                    seen[lbl] = h
+        fig.legend(list(seen.values()), list(seen.keys()), **kwargs)
 
     plt.rcParams.update({
         "axes.titlesize": 16,
@@ -490,7 +517,14 @@ def run_experiment_2(
         ax.set_xlabel("privacy budget ε")
         ax.set_ylabel("relative L1 error")
         ax.grid(True, linestyle="--", alpha=0.4)
-        ax.legend()
+
+    _add_unique_figure_legend(
+        fig, axes,
+        loc="upper center",
+        ncol=4,  # tweak as you like
+        title="Measure",
+        bbox_to_anchor=(0.5, 1.08)
+    )
 
     fig.suptitle("Relative L1 Error as function of Privacy Budget", y=1.02)
     fig.tight_layout()
