@@ -480,7 +480,7 @@ def run_experiment_2(
 
         ax.set_title(ds_name)
         ax.set_xlabel("privacy budget ε")
-        ax.set_ylabel("relative L1 error |X−Y|/|Y|")
+        ax.set_ylabel("relative L1 error")
         ax.grid(True, linestyle="--", alpha=0.4)
         ax.legend()
 
