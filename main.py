@@ -352,7 +352,7 @@ def run_experiment_1(
                 elapsed = time.time() - start_time
 
                 # Skip if runtime > 2 hours
-                if elapsed > TIME_LIMIT and "RepairMaxSat" in measure_name:
+                if elapsed > TIME_LIMIT:
                     print(f"Skipping {measure_name} for {crit} (runtime exceeded 2h)")
                     rep_times.append(np.nan)
                     continue
@@ -406,7 +406,6 @@ def run_experiment_1(
         print(f"Saved {outfile}")
 
     plt.show()
-
 
 
 def run_experiment_2(
@@ -468,7 +467,7 @@ def run_experiment_2(
                         elapsed = time.time() - start_time
 
                         # Skip if computation exceeds 2 hours (for RepairMaxSat only)
-                        if elapsed > TIME_LIMIT and "RepairMaxSat" in measure_name:
+                        if elapsed > TIME_LIMIT:
                             print(f"Skipping {measure_name} for {crit} at ε={eps} (runtime > 2h)")
                             reps.append(np.nan)
                             continue
