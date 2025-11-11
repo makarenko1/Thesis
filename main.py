@@ -1,9 +1,14 @@
 import time
+from typing import Tuple, Dict
 
 import numpy as np
 import pandas as pd
+import torch
 from matplotlib import pyplot as plt
-from sklearn.preprocessing import LabelEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
+from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
 
 from proxy_repair_maxsat import ProxyRepairMaxSat
 from tuple_contribution import TupleContribution
@@ -316,7 +321,7 @@ def _encode_and_clean(data_path, cols):
 
 def run_experiment_1(
     epsilon=None,
-    repeats=3,
+    repeats=5,
     save=True,
     outfile="plots/experiment1.png",
     seed=123
@@ -338,7 +343,8 @@ def run_experiment_1(
             rep_times = []
             for r in range(repeats):
                 n = min(sample_size, len(data))
-                sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
+                sample = data.sample(n=min(len(data), sample_size), replace=False,
+                                     random_state=rng.randint(0, 1_000_000))
                 m = measure_cls(data=sample)
 
                 start_time = time.time()
@@ -410,8 +416,8 @@ def run_experiment_1(
 
 def run_experiment_2(
     epsilons=(0.05, 0.1, 0.2, 0.5, 1.0, 2.0),
-    sample_size=1000,
-    repeats=3,
+    sample_size=300000,
+    repeats=5,
     save=True,
     outfile="plots/experiment2.png",
     seed=123
@@ -438,7 +444,8 @@ def run_experiment_2(
         path = spec["path"]
         criteria = spec["criteria"]
         data = _encode_and_clean(path, criteria[0])
-        sample = data.sample(n=sample_size, replace=False, random_state=rng.randint(0, 1_000_000))
+        sample = data.sample(n=min(len(data), sample_size), replace=False,
+                             random_state=rng.randint(0, 1_000_000))
 
         baselines = []
         for measure_name, measure_cls in measures.items():
@@ -496,7 +503,215 @@ def run_experiment_2(
     plt.show()
 
 def run_experiment_3():
-    pass
+    # ==== DP-SGD / training params ====
+    DP_NOISE_MULT = 1.0        # Gaussian noise multiplier
+    DP_MAX_GRAD_NORM = 1.0     # Per-sample clipping norm
+    BATCH_SIZE = 300000        # you asked for this value; we'll batch smaller if sample is smaller
+    EPOCHS = 5
+    LR = 1e-2
+    POS_THRESHOLD = 0.5        # for CSP thresholding of predictions
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+    TEST_SIZE = 0.3
+    RANDOM_STATE = 42
+
+    # ==== Models ====
+    class DPLinear(nn.Module):
+        def __init__(self, in_dim: int):
+            super().__init__()
+            self.linear = nn.Linear(in_dim, 1)
+        def forward(self, x):
+            return torch.sigmoid(self.linear(x))  # keep outputs in [0,1]
+
+    class DPMLP(nn.Module):
+        def __init__(self, in_dim: int, hidden: int = 64):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(in_dim, hidden),
+                nn.ReLU(),
+                nn.Linear(hidden, 1),
+            )
+        def forward(self, x):
+            return torch.sigmoid(self.net(x))     # keep outputs in [0,1]
+
+    # ==== Fairness: Conditional Statistical Parity (CSP) ====
+    def _conditional_statistical_parity(y_hat: np.ndarray,
+                                        protected: pd.Series,
+                                        admissible: pd.Series,
+                                        threshold: float = POS_THRESHOLD) -> float:
+        """
+        For each admissible value a:
+           max_{s,s'} | P(ŷ=1 | S=s, A=a) - P(ŷ=1 | S=s', A=a) |
+        Average over a, weighted by P(A=a).
+        """
+        y_pos = (y_hat >= threshold).astype(int)
+        A_vals, A_counts = np.unique(admissible, return_counts=True)
+        n = len(admissible)
+        weighted_gaps = []
+        for a, c in zip(A_vals, A_counts):
+            mask_a = (admissible == a)
+            if mask_a.sum() == 0:
+                continue
+            rates = []
+            for s in np.unique(protected[mask_a]):
+                mask_sa = mask_a & (protected == s)
+                rates.append(y_pos[mask_sa].mean() if mask_sa.sum() > 0 else 0.0)
+            if len(rates) == 0:
+                continue
+            gap = float(np.max(rates) - np.min(rates))
+            weighted_gaps.append((c / n) * gap)
+        return float(np.sum(weighted_gaps)) if weighted_gaps else 0.0
+
+    # ==== Torch helpers ====
+    def _to_torch(X: np.ndarray, y: np.ndarray) -> Tuple[TensorDataset, int]:
+        X_t = torch.tensor(X, dtype=torch.float32)
+        y_t = torch.tensor(y, dtype=torch.float32).reshape(-1, 1)
+        return TensorDataset(X_t, y_t), X_t.shape[1]
+
+    def _train_dp_sgd(model: nn.Module,
+                      train_loader: DataLoader,
+                      epochs: int = EPOCHS,
+                      lr: float = LR,
+                      noise_multiplier: float = DP_NOISE_MULT,
+                      max_grad_norm: float = DP_MAX_GRAD_NORM) -> None:
+        model.to(DEVICE)
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.0)
+        loss_fn = nn.L1Loss()
+        try:
+            from opacus import PrivacyEngine
+            privacy_engine = PrivacyEngine()
+            model, optimizer, train_loader = privacy_engine.make_private(
+                module=model,
+                optimizer=optimizer,
+                data_loader=train_loader,
+                noise_multiplier=noise_multiplier,
+                max_grad_norm=max_grad_norm,
+            )
+        except ImportError:
+            raise RuntimeError("Opacus not installed. Install via: pip install opacus torch")
+
+        model.train()
+        for _ in range(epochs):
+            for xb, yb in train_loader:
+                xb = xb.to(DEVICE); yb = yb.to(DEVICE)
+                optimizer.zero_grad()
+                preds = model(xb)
+                loss = loss_fn(preds, yb)
+                loss.backward()
+                optimizer.step()
+
+    def _predict(model: nn.Module, X: np.ndarray) -> np.ndarray:
+        model.eval()
+        with torch.no_grad():
+            X_t = torch.tensor(X, dtype=torch.float32, device=DEVICE)
+            yhat = model(X_t).cpu().numpy().reshape(-1)
+        return np.clip(yhat, 0.0, 1.0)
+
+    # ==== safety: check columns exist before calling _encode_and_clean ====
+    def _has_all_columns(csv_path: str, cols: list) -> bool:
+        try:
+            header = pd.read_csv(csv_path, nrows=0)
+            return set(cols).issubset(set(header.columns))
+        except Exception:
+            return False
+
+    # === Core loop over datasets and criteria (expects `datasets` to be defined in scope) ===
+    for ds_name, spec in datasets.items():
+        print(f"\n=== DATASET: {ds_name} ===")
+        path = spec["path"]
+        crits = spec["criteria"]
+
+        # results dicts: criterion (lowercase) -> (mae, csp)
+        results_linear: Dict[str, Tuple[float, float]] = {}
+        results_mlp:    Dict[str, Tuple[float, float]] = {}
+
+        for crit in crits:
+            protected, response = crit[0], crit[1]
+            admissible = crit[2] if len(crit) == 3 else None
+            cols_needed = [protected, response] + ([admissible] if admissible else [])
+            # lowercase label
+            crit_label = (f"{protected}->{response}|{admissible}" if admissible else f"{protected}->{response}").lower()
+
+            if not _has_all_columns(path, cols_needed):
+                print(f"⚠️  Skipping {crit_label}: missing columns in {path}")
+                continue
+
+            # preprocess ONLY the needed columns (as you requested)
+            df_enc = _encode_and_clean(path, cols_needed)
+
+            # choose features: use encoded protected + admissible; target is encoded response
+            feat_cols = [protected] + ([admissible] if admissible else [])
+            X_full = df_enc[feat_cols].to_numpy(dtype=float)
+            y_full = df_enc[response].to_numpy(dtype=float)
+
+            # normalize y into [0,1] so MAE is well-behaved (in case label encoder created >2 classes)
+            if np.ptp(y_full) > 0:
+                y_full = (y_full - y_full.min()) / (np.ptp(y_full))
+
+            # limit training size
+            n_total = len(df_enc)
+            n_use = int(min(n_total, 300000))
+            if n_use < n_total:
+                df_enc = df_enc.sample(n=n_use, random_state=RANDOM_STATE)
+                X_full = df_enc[feat_cols].to_numpy(dtype=float)
+                y_full = df_enc[response].to_numpy(dtype=float)
+                if np.ptp(y_full) > 0:
+                    y_full = (y_full - y_full.min()) / (np.ptp(y_full))
+
+            # split
+            stratify = None
+            try:
+                y_round = np.round(y_full)
+                if len(np.unique(y_round)) <= 10:
+                    stratify = y_round
+            except Exception:
+                stratify = None
+
+            X_train, X_test, y_train, y_test = train_test_split(
+                X_full, y_full, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=stratify
+            )
+
+            # protected/admissible series for CSP on TEST split
+            prot_test = df_enc[protected].iloc[X_test.shape[0]*0:len(X_test)].reset_index(drop=True)  # placeholder
+            # Better: recompute masks from the same split indices
+            # build indices by a second split call with return of indices
+            idx_all = np.arange(len(X_full))
+            _, idx_test = train_test_split(
+                idx_all, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=stratify
+            )
+            prot_test = df_enc[protected].iloc[idx_test].reset_index(drop=True)
+            if admissible:
+                adm_test = df_enc[admissible].iloc[idx_test].reset_index(drop=True)
+            else:
+                # if no admissible, make a single-group placeholder (all zeros)
+                adm_test = pd.Series(np.zeros(len(idx_test), dtype=int))
+
+            # to torch
+            train_ds, in_dim = _to_torch(X_train, y_train)
+            effective_batch = min(BATCH_SIZE, len(train_ds))
+            train_loader = DataLoader(train_ds, batch_size=effective_batch, shuffle=True, drop_last=False)
+
+            # --- DPLinear ---
+            lin = DPLinear(in_dim)
+            _train_dp_sgd(lin, train_loader)
+            yhat_lin = _predict(lin, X_test)
+            mae_lin = float(np.mean(np.abs(yhat_lin - y_test)))
+            csp_lin = _conditional_statistical_parity(yhat_lin, prot_test, adm_test, threshold=POS_THRESHOLD)
+            results_linear[crit_label] = (mae_lin, csp_lin)
+
+            # --- DPMLP ---
+            mlp = DPMLP(in_dim)
+            _train_dp_sgd(mlp, train_loader)
+            yhat_mlp = _predict(mlp, X_test)
+            mae_mlp = float(np.mean(np.abs(yhat_mlp - y_test)))
+            csp_mlp = _conditional_statistical_parity(yhat_mlp, prot_test, adm_test, threshold=POS_THRESHOLD)
+            results_mlp[crit_label] = (mae_mlp, csp_mlp)
+
+        # Print dicts
+        print("DPLinear results (criterion -> (mae, csp)):")
+        print(results_linear)
+        print("DPMLP results (criterion -> (mae, csp)):")
+        print(results_mlp)
 
 
 
@@ -505,3 +720,4 @@ if __name__ == "__main__":
     # create_plot_2()
     run_experiment_1()
     run_experiment_2()
+    run_experiment_3()
