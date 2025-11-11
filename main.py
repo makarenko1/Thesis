@@ -304,23 +304,15 @@ measures = {
     "Tuple Contribution": TupleContribution,
 }
 
+TIME_LIMIT = 7200  # 2 hours in seconds
+
 def _encode_and_clean(data_path, cols):
-    """
-    Cleans and label-encode selected columns.
-
-    Drops rows with missing values and converts categorical entries
-    into integer codes for the specified columns.
-
-    Returns
-    -------
-    pandas.DataFrame
-        A cleaned and encoded copy of the input data.
-    """
     df = pd.read_csv(data_path)
     df = df.replace(["NA", "N/A", ""], pd.NA).dropna(subset=cols).copy()
     for c in cols:
         df[c] = LabelEncoder().fit_transform(df[c])
     return df
+
 
 def run_experiment_1(
     epsilon=None,
@@ -329,13 +321,6 @@ def run_experiment_1(
     outfile="plots/experiment1.png",
     seed=123
 ):
-    """
-    Produces a single figure with 5 subplots in one row: one subplot per dataset.
-    Each subplot shows 4 lines (one per measure) of runtime vs. provided sample sizes.
-    For each dataset/measure/sample size, runtime is averaged over `repeats` random samples
-    and averaged across all 4 criteria of that dataset.
-    """
-
     sample_sizes_per_dataset = {
         "Adult": [1000, 5000, 10000, 15000, 30000],
         "IPUMS-CPS": [5000, 10000, 100000, 300000, 500000],
@@ -344,30 +329,38 @@ def run_experiment_1(
         "Healthcare": [100, 200, 400, 700, 1000],
     }
 
-    def _runtime_avg_over_repeats_and_criteria(measure_cls, data, criteria, sample_size, repeats=repeats,
-                                               epsilon=epsilon, seed=seed):
-        """
-        For a given measure and dataset, compute average runtime at a sample size:
-        - repeat `repeats` times with different random samples,
-        - for each repetition, run the measure once per criterion,
-        - average runtime across repetitions and across all criteria.
-        """
+    def _runtime_avg_over_repeats_and_criteria(measure_name, measure_cls, data, criteria, sample_size,
+                                               repeats=repeats, epsilon=epsilon, seed=seed):
         rng = np.random.RandomState(seed)
-        # collect times per criterion, then average across criteria
         crit_times = []
+
         for crit in criteria:
             rep_times = []
             for r in range(repeats):
                 n = min(sample_size, len(data))
                 sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
                 m = measure_cls(data=sample)
-                t0 = time.time()
-                _ = m.calculate([crit], epsilon=epsilon)
-                rep_times.append(time.time() - t0)
-            crit_times.append(float(np.mean(rep_times)))
-        return float(np.mean(crit_times))
 
-    # Big fonts
+                start_time = time.time()
+                try:
+                    _ = m.calculate([crit], epsilon=epsilon)
+                except Exception:
+                    # In case the measure fails, skip
+                    rep_times.append(np.nan)
+                    continue
+
+                elapsed = time.time() - start_time
+
+                # Skip if runtime > 2 hours
+                if elapsed > TIME_LIMIT and "RepairMaxSat" in measure_name:
+                    print(f"Skipping {measure_name} for {crit} (runtime exceeded 2h)")
+                    rep_times.append(np.nan)
+                    continue
+
+                rep_times.append(elapsed)
+            crit_times.append(np.nanmean(rep_times))
+        return float(np.nanmean(crit_times))
+
     plt.rcParams.update({
         "axes.titlesize": 16,
         "axes.labelsize": 14,
@@ -384,20 +377,20 @@ def run_experiment_1(
     for ax, (ds_name, spec) in zip(axes, datasets.items()):
         path = spec["path"]
         criteria = spec["criteria"]
-        sample_sizes = sample_sizes_per_dataset[path]
+        sample_sizes = sample_sizes_per_dataset[ds_name]
         data = _encode_and_clean(path, criteria[0])
 
-        # one line per measure
         for measure_name, measure_cls in measures.items():
             runtimes = []
             for n in sample_sizes:
-                t = _runtime_avg_over_repeats_and_criteria(measure_cls=measure_cls, data=data, criteria=criteria,
-                                                           sample_size=n, repeats=repeats, epsilon=epsilon)
+                t = _runtime_avg_over_repeats_and_criteria(
+                    measure_name, measure_cls, data, criteria, n, repeats=repeats, epsilon=epsilon)
                 runtimes.append(t)
 
+            # Connect through skipped points (matplotlib ignores NaNs automatically)
             ax.plot(sample_sizes, runtimes, marker="o", linewidth=2, label=measure_name)
 
-        ax.set_title(path)
+        ax.set_title(ds_name)
         ax.set_xlabel("number of tuples (sample size)")
         ax.set_ylabel("runtime (s)")
         ax.grid(True, linestyle="--", alpha=0.4)
@@ -414,6 +407,8 @@ def run_experiment_1(
 
     plt.show()
 
+
+
 def run_experiment_2(
     epsilons=(0.05, 0.1, 0.2, 0.5, 1.0, 2.0),
     sample_size=1000,
@@ -422,23 +417,10 @@ def run_experiment_2(
     outfile="plots/experiment2.png",
     seed=123
 ):
-    """
-    Experiment 2:
-    For each dataset (subplot) and each measure (line),
-    plot relative L1 error vs privacy budget epsilon.
-
-    Relative L1 error is |X - Y| / |Y|,
-    where X = private metric output at epsilon,
-          Y = non-private baseline (epsilon=None).
-    We average across `repeats` (for DP noise) and across all 4 criteria.
-    """
-
-    # Safe division helper
     def _rel_error(x, y, tiny=1e-12):
         denom = max(abs(y), tiny)
         return abs(x - y) / denom
 
-    # Big fonts
     plt.rcParams.update({
         "axes.titlesize": 16,
         "axes.labelsize": 14,
@@ -459,10 +441,8 @@ def run_experiment_2(
         data = _encode_and_clean(path, criteria[0])
         sample = data.sample(n=sample_size, replace=False, random_state=rng.randint(0, 1_000_000))
 
-        # Pre-compute NON-PRIVATE baselines per criterion (epsilon=None)
         baselines = []
         for measure_name, measure_cls in measures.items():
-            # Baseline Y for each criterion with the *full dataset*
             Y = []
             for crit in criteria:
                 m = measure_cls(data=sample)
@@ -470,22 +450,32 @@ def run_experiment_2(
                 Y.append(float(y_val))
             baselines.append((measure_name, np.array(Y, dtype=float)))
 
-        # One line per measure
         for (measure_name, measure_cls), (_, Y_vec) in zip(measures.items(), baselines):
             rel_errors_for_eps = []
             for eps in epsilons:
-                # Average over repeats and criteria
                 crit_means = []
                 for crit_idx, crit in enumerate(criteria):
                     y = Y_vec[crit_idx]
-                    # Repeat due to DP noise
                     reps = []
                     for r in range(repeats):
                         m = measure_cls(data=sample)
-                        x = float(m.calculate([crit], epsilon=eps))
+                        start_time = time.time()
+                        try:
+                            x = float(m.calculate([crit], epsilon=eps))
+                        except Exception:
+                            reps.append(np.nan)
+                            continue
+                        elapsed = time.time() - start_time
+
+                        # Skip if computation exceeds 2 hours (for RepairMaxSat only)
+                        if elapsed > TIME_LIMIT and "RepairMaxSat" in measure_name:
+                            print(f"Skipping {measure_name} for {crit} at ε={eps} (runtime > 2h)")
+                            reps.append(np.nan)
+                            continue
+
                         reps.append(_rel_error(x, y))
-                    crit_means.append(float(np.mean(reps)))
-                rel_errors_for_eps.append(float(np.mean(crit_means)))
+                    crit_means.append(np.nanmean(reps))
+                rel_errors_for_eps.append(np.nanmean(crit_means))
 
             ax.plot(epsilons, rel_errors_for_eps, marker="o", linewidth=2, label=measure_name)
 
