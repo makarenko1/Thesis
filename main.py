@@ -6,6 +6,7 @@ import pandas as pd
 import torch
 from matplotlib import pyplot as plt
 from sklearn.compose import ColumnTransformer
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -633,7 +634,7 @@ def run_experiment_3():
             crit_label = (f"{protected}->{response}|{admissible}" if admissible else f"{protected}->{response}").lower()
 
             if not _has_all_columns(path, cols_needed):
-                print(f"⚠️  Skipping {crit_label}: missing columns in {path}")
+                print(f"Skipping {crit_label}: missing columns in {path}")
                 continue
 
             # preprocess ONLY the needed columns (as you requested)
