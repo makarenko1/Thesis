@@ -322,7 +322,7 @@ def _encode_and_clean(data_path, cols):
 
 def run_experiment_1(
     epsilon=None,
-    repetitions=10,
+    repetitions=1,
     save=True,
     outfile="plots/experiment1.png",
     seed=123
@@ -376,6 +376,7 @@ def run_experiment_1(
                             elapsed_time = time.time() - start_time
                             results_for_sample_size.append(elapsed_time)
                         except TimeoutError:
+                            print("Skipping the iteration due to timeout.")
                             results_for_sample_size.append(np.nan)
                             break
                 results[measure_name].append(np.nan if np.any(np.isnan(results_for_sample_size)) else
@@ -412,7 +413,7 @@ def run_experiment_1(
 def run_experiment_2(
     epsilon=None,
     sample_size=300000,
-    repetitions=10,
+    repetitions=1,
     save=True,
     outfile="plots/experiment2.png",
     seed=123
@@ -457,6 +458,7 @@ def run_experiment_2(
                             elapsed_time = time.time() - start_time
                             results_for_num_criteria.append(elapsed_time)
                         except TimeoutError:
+                            print("Skipping the iteration due to timeout.")
                             results_for_num_criteria.append(np.nan)
                             break
                 results[measure_name].append(np.nan if np.any(np.isnan(results_for_num_criteria)) else
@@ -494,7 +496,7 @@ def run_experiment_2(
 def run_experiment_3(
     epsilons=(0.05, 0.1, 0.5, 1.0, 2.0),
     sample_size=300000,
-    repetitions=10,
+    repetitions=1,
     save=True,
     outfile="plots/experiment3.png",
     seed=123
@@ -544,6 +546,7 @@ def run_experiment_3(
                                 timeout=timeout_seconds)
                             results_for_epsilon[sample_size].append(_rel_error(private_result, non_private_result))
                         except TimeoutError:
+                            print("Skipping the iteration due to timeout.")
                             results_for_epsilon.append(np.nan)
                             break
                 results[measure_name].append(np.nan if np.any(np.isnan(results_for_epsilon)) else
