@@ -5,16 +5,16 @@ import numpy as np
 import pandas as pd
 import torch
 from matplotlib import pyplot as plt
-from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from proxy_repair_maxsat import ProxyRepairMaxSat
-from tuple_contribution import TupleContribution
+from concurrent.futures import ThreadPoolExecutor
 from mutual_information import MutualInformation
 from proxy_mutual_information_tvd import ProxyMutualInformationTVD
+from proxy_repair_maxsat import ProxyRepairMaxSat
+from tuple_contribution import TupleContribution
 from unused_measures.proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
 
 
@@ -310,6 +310,8 @@ measures = {
     "Tuple Contribution": TupleContribution,
 }
 
+timeout_seconds = 2 * 60 * 60  # 2 hours
+
 def _encode_and_clean(data_path, cols):
     df = pd.read_csv(data_path)
     df = df.replace(["NA", "N/A", ""], pd.NA).dropna(subset=cols).copy()
@@ -366,12 +368,18 @@ def run_experiment_1(
                     n = min(sample_size, len(data))
                     sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
                     m = measure_cls(data=sample)
-
                     start_time = time.time()
-                    _ = m.calculate(criteria, epsilon=epsilon)
-                    elapsed_time = time.time() - start_time
-                    results_for_sample_size.append(elapsed_time)
-                results[measure_name].append(np.mean(results_for_sample_size))
+                    with ThreadPoolExecutor() as executor:
+                        try:
+                            _ = executor.submit(m.calculate(criteria, epsilon=epsilon)).result(
+                                timeout=timeout_seconds)
+                            elapsed_time = time.time() - start_time
+                            results_for_sample_size.append(elapsed_time)
+                        except TimeoutError:
+                            results_for_sample_size.append(np.nan)
+                            break
+                results[measure_name].append(np.nan if np.any(np.isnan(results_for_sample_size)) else
+                                             np.mean(results_for_sample_size))
 
         for measure_name, runtimes in results.items():
             ax.plot(sample_sizes, runtimes, marker="o", linewidth=2, label=measure_name)
@@ -441,12 +449,18 @@ def run_experiment_2(
                     n = min(sample_size, len(data))
                     sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
                     m = measure_cls(data=sample)
-
                     start_time = time.time()
-                    _ = m.calculate(criteria[:num_criteria], epsilon=epsilon)
-                    elapsed_time = time.time() - start_time
-                    results_for_num_criteria.append(elapsed_time)
-                results[measure_name].append(np.mean(results_for_num_criteria))
+                    with ThreadPoolExecutor() as executor:
+                        try:
+                            _ = executor.submit(m.calculate(criteria[:num_criteria], epsilon=epsilon)).result(
+                                timeout=timeout_seconds)
+                            elapsed_time = time.time() - start_time
+                            results_for_num_criteria.append(elapsed_time)
+                        except TimeoutError:
+                            results_for_num_criteria.append(np.nan)
+                            break
+                results[measure_name].append(np.nan if np.any(np.isnan(results_for_num_criteria)) else
+                                             np.mean(results_for_num_criteria))
 
         for measure_name, runtimes in results.items():
             ax.plot([num_criteria for num_criteria in range(1, len(criteria) + 1)], runtimes, marker="o",
@@ -522,10 +536,18 @@ def run_experiment_3(
                     n = min(sample_size, len(data))
                     sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
                     m = measure_cls(data=sample)
-                    non_private_result = m.calculate(criteria, epsilon=None)
-                    private_result = m.calculate(criteria, epsilon=epsilon)
-                    results_for_epsilon[sample_size].append(_rel_error(private_result, non_private_result))
-                results[measure_name].append(np.mean(results_for_epsilon))
+                    with ThreadPoolExecutor() as executor:
+                        try:
+                            non_private_result = executor.submit(m.calculate(criteria, epsilon=None)).result(
+                                timeout=timeout_seconds)
+                            private_result = executor.submit(m.calculate(criteria, epsilon=epsilon)).result(
+                                timeout=timeout_seconds)
+                            results_for_epsilon[sample_size].append(_rel_error(private_result, non_private_result))
+                        except TimeoutError:
+                            results_for_epsilon.append(np.nan)
+                            break
+                results[measure_name].append(np.nan if np.any(np.isnan(results_for_epsilon)) else
+                                             np.mean(results_for_epsilon))
 
         for measure_name, losses in results.items():
             ax.plot(epsilons, losses, marker="o", linewidth=2, label=measure_name)
