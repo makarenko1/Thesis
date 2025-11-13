@@ -385,9 +385,10 @@ def run_experiment_1(
         for measure_name, runtimes in results.items():
             ax.plot(sample_sizes, runtimes, marker="o", linewidth=2, label=measure_name)
 
+        ax.set_yscale('log')
         ax.set_title(ds_name)
-        ax.set_xlabel("number of tuples (sample size)")
-        ax.set_ylabel("runtime (s)")
+        ax.set_xlabel("sample size")
+        ax.set_ylabel("runtime (s), log scale")
         ax.grid(True, linestyle="--", alpha=0.4)
 
     seen = {}
@@ -468,9 +469,10 @@ def run_experiment_2(
             ax.plot([num_criteria for num_criteria in range(1, len(criteria) + 1)], runtimes, marker="o",
                     linewidth=2, label=measure_name)
 
+        ax.set_yscale('log')
         ax.set_title(ds_name)
         ax.set_xlabel("number of criteria")
-        ax.set_ylabel("runtime (s)")
+        ax.set_ylabel("runtime (s), log scale")
         ax.grid(True, linestyle="--", alpha=0.4)
 
     seen = {}
