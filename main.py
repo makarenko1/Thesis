@@ -371,7 +371,7 @@ def run_experiment_1(
                     start_time = time.time()
                     with ThreadPoolExecutor() as executor:
                         try:
-                            _ = executor.submit(m.calculate(criteria, epsilon=epsilon)).result(
+                            _ = executor.submit(m.calculate, criteria, epsilon=epsilon).result(
                                 timeout=timeout_seconds)
                             elapsed_time = time.time() - start_time
                             results_for_sample_size.append(elapsed_time)
@@ -452,7 +452,7 @@ def run_experiment_2(
                     start_time = time.time()
                     with ThreadPoolExecutor() as executor:
                         try:
-                            _ = executor.submit(m.calculate(criteria[:num_criteria], epsilon=epsilon)).result(
+                            _ = executor.submit(m.calculate, criteria[:num_criteria], epsilon=epsilon).result(
                                 timeout=timeout_seconds)
                             elapsed_time = time.time() - start_time
                             results_for_num_criteria.append(elapsed_time)
@@ -538,9 +538,9 @@ def run_experiment_3(
                     m = measure_cls(data=sample)
                     with ThreadPoolExecutor() as executor:
                         try:
-                            non_private_result = executor.submit(m.calculate(criteria, epsilon=None)).result(
+                            non_private_result = executor.submit(m.calculate, criteria, epsilon=None).result(
                                 timeout=timeout_seconds)
-                            private_result = executor.submit(m.calculate(criteria, epsilon=epsilon)).result(
+                            private_result = executor.submit(m.calculate, criteria, epsilon=epsilon).result(
                                 timeout=timeout_seconds)
                             results_for_epsilon[sample_size].append(_rel_error(private_result, non_private_result))
                         except TimeoutError:
@@ -777,5 +777,5 @@ if __name__ == "__main__":
     # create_plot_1()
     # create_plot_2()
     run_experiment_1()
-    run_experiment_2()
-    run_experiment_3()
+    # run_experiment_2()
+    # run_experiment_3()
