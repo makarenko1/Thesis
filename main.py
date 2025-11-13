@@ -320,7 +320,7 @@ def _encode_and_clean(data_path, cols):
 
 def run_experiment_1(
     epsilon=None,
-    repetitions=1,
+    repetitions=10,
     save=True,
     outfile="plots/experiment1.png",
     seed=123
@@ -329,7 +329,7 @@ def run_experiment_1(
     for every dataset and increasing the number of tuples."""
     sample_sizes_per_dataset = {
         "Adult": [1000, 5000, 10000, 15000, 30000],
-        "IPUMS-CPS": [5000, 10000, 100000, 300000, 500000],
+        "IPUMS-CPS": [5000, 10000, 50000, 100000, 300000],
         "Stackoverflow": [5000, 10000, 20000, 40000, 60000],
         "Compas": [1000, 1500, 3000, 7000, 10000],
         "Healthcare": [100, 200, 400, 700, 1000],
@@ -402,11 +402,87 @@ def run_experiment_1(
 
 
 def run_experiment_2(
-    epsilons=(0.05, 0.1, 0.5, 1.0, 2.0),
+    epsilon=None,
     sample_size=300000,
-    repetitions=1,
+    repetitions=10,
     save=True,
     outfile="plots/experiment2.png",
+    seed=123
+):
+    """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping sample size
+        constant and increasing the number of criteria in the set."""
+    plt.rcParams.update({
+        "axes.titlesize": 16,
+        "axes.labelsize": 14,
+        "xtick.labelsize": 12,
+        "ytick.labelsize": 12,
+        "legend.fontsize": 12,
+        "figure.titlesize": 18,
+    })
+
+    fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
+    if not isinstance(axes, np.ndarray):
+        axes = np.array([axes])
+
+    rng = np.random.RandomState(seed)
+    for ax, (ds_name, spec) in zip(axes, datasets.items()):
+        path = spec["path"]
+        criteria = spec["criteria"]
+        cols_list = []
+        for criterion in criteria:
+            cols_list += criterion
+        data = _encode_and_clean(path, cols_list)
+
+        results = {measure_name: [] for measure_name in measures.keys()}
+        for measure_name, measure_cls in measures.items():
+            for num_criteria in range(1, len(criteria) + 1):
+                results_for_num_criteria = []
+                for _ in range(repetitions):
+                    n = min(sample_size, len(data))
+                    sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
+                    m = measure_cls(data=sample)
+
+                    start_time = time.time()
+                    _ = m.calculate(criteria[:num_criteria], epsilon=epsilon)
+                    elapsed_time = time.time() - start_time
+                    results_for_num_criteria.append(elapsed_time)
+                results[measure_name].append(np.mean(results_for_num_criteria))
+
+        for measure_name, runtimes in results.items():
+            ax.plot([num_criteria for num_criteria in range(1, len(criteria) + 1)], runtimes, marker="o",
+                    linewidth=2, label=measure_name)
+
+        ax.set_title(ds_name)
+        ax.set_xlabel("number of criteria")
+        ax.set_ylabel("runtime (s)")
+        ax.grid(True, linestyle="--", alpha=0.4)
+
+    seen = {}
+    for ax in np.ravel(axes):
+        handles, labels = ax.get_legend_handles_labels()
+        for h, lbl in zip(handles, labels):
+            if lbl and lbl not in seen:
+                seen[lbl] = h
+    fig.legend(list(seen.values()), list(seen.keys()), loc="upper center", ncol=4, title="Measure",
+               bbox_to_anchor=(0.5, 1.08))
+
+    fig.suptitle("Runtime as function of Number of Criteria", y=1.02)
+    fig.tight_layout()
+
+    if save:
+        import os
+        os.makedirs(os.path.dirname(outfile), exist_ok=True)
+        plt.savefig(outfile, dpi=180, bbox_inches="tight")
+        print(f"Saved {outfile}")
+    plt.show()
+
+
+def run_experiment_3(
+    epsilons=(0.05, 0.1, 0.5, 1.0, 2.0),
+    sample_size=300000,
+    repetitions=10,
+    save=True,
+    outfile="plots/experiment3.png",
     seed=123
 ):
     """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping criteria and the
@@ -479,7 +555,7 @@ def run_experiment_2(
     plt.show()
 
 
-def run_experiment_3():
+def run_experiment_4():
     # ==== DP-SGD / training params ====
     DP_NOISE_MULT = 1.0        # Gaussian noise multiplier
     DP_MAX_GRAD_NORM = 1.0     # Per-sample clipping norm
@@ -680,4 +756,4 @@ if __name__ == "__main__":
     # create_plot_2()
     run_experiment_1()
     run_experiment_2()
-    # run_experiment_3()
+    run_experiment_3()
