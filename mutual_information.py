@@ -68,9 +68,9 @@ class MutualInformation:
 
         elapsed_time = time.time() - start_time
         print(
-            f"Mutual Information: MI for fairness criteria {fairness_criteria}: "
-            f"{mi:.4f} with epsilon: {epsilon if epsilon is not None else 'infinity'}. "
-            f"Calculation took {elapsed_time:.3f} seconds."
+            f"Mutual Information: MI for fairness criteria {fairness_criteria}: {mi:.4f} with data size: "
+            f"{len(self.dataset)} and epsilon: {epsilon if epsilon is not None else 'infinity'}. Calculation took "
+            f"{elapsed_time:.3f} seconds."
         )
         return round(mi, 4)
 

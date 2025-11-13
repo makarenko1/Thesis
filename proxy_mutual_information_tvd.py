@@ -70,8 +70,8 @@ class ProxyMutualInformationTVD:
 
         elapsed_time = time.time() - start_time
         print(
-            f"TVD Proxy: Proxy Mutual Information for fairness criteria {fairness_criteria}: "
-            f"{tvd_proxy:.4f} with epsilon: {epsilon if epsilon is not None else 'infinity'}. "
+            f"TVD Proxy: Proxy Mutual Information for fairness criteria {fairness_criteria}: {tvd_proxy:.4f} with "
+            f"data size: {len(self.dataset)} and epsilon: {epsilon if epsilon is not None else 'infinity'}. "
             f"Calculation took {elapsed_time:.3f} seconds."
         )
         return round(tvd_proxy, 4)

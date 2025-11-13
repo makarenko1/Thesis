@@ -75,8 +75,9 @@ class TupleContribution:
             contribution = contribution + np.random.laplace(loc=0.0, scale=sensitivity / float(epsilon))
 
         elapsed_time = time.time() - start_time
-        print(f"Tuple Contribution for fairness criteria {fairness_criteria}: {contribution:.4f} with epsilon: "
-              f"{epsilon if epsilon is not None else 'infinity'}. Calculation took {elapsed_time:.3f} seconds.")
+        print(f"Tuple Contribution for fairness criteria {fairness_criteria}: {contribution:.4f} with data size: "
+              f"{len(self.dataset)} and epsilon: {epsilon if epsilon is not None else 'infinity'}. Calculation took "
+              f"{elapsed_time:.3f} seconds.")
         return contribution
 
     @staticmethod
