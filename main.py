@@ -320,11 +320,13 @@ def _encode_and_clean(data_path, cols):
 
 def run_experiment_1(
     epsilon=None,
+    repetitions=1,
     save=True,
     outfile="plots/experiment1.png",
     seed=123
 ):
-    """Run on one criterion each time while increasing the number of tuples."""
+    """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping criteria constant
+    for every dataset and increasing the number of tuples."""
     sample_sizes_per_dataset = {
         "Adult": [1000, 5000, 10000, 15000, 30000],
         "IPUMS-CPS": [5000, 10000, 100000, 300000, 500000],
@@ -350,24 +352,26 @@ def run_experiment_1(
     for ax, (ds_name, spec) in zip(axes, datasets.items()):
         path = spec["path"]
         criteria = spec["criteria"]
+        cols_list = []
+        for criterion in criteria:
+            cols_list += criterion
+        data = _encode_and_clean(path, cols_list)
         sample_sizes = sample_sizes_per_dataset[ds_name]
 
         results = {measure_name: [] for measure_name in measures.keys()}
         for measure_name, measure_cls in measures.items():
-            results_per_sample_size = {sample_size: [] for sample_size in sample_sizes}
-            for criterion in criteria:
-                data = _encode_and_clean(path, criterion)
-                for sample_size in sample_sizes:
+            for sample_size in sample_sizes:
+                results_for_sample_size = []
+                for _ in range(repetitions):
                     n = min(sample_size, len(data))
                     sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
                     m = measure_cls(data=sample)
 
                     start_time = time.time()
-                    _ = m.calculate([criterion], epsilon=epsilon)
+                    _ = m.calculate(criteria, epsilon=epsilon)
                     elapsed_time = time.time() - start_time
-                    results_per_sample_size[sample_size].append(elapsed_time)
-            for sample_size in sample_sizes:
-                results[measure_name].append(np.mean(results_per_sample_size[sample_size]))
+                    results_for_sample_size.append(elapsed_time)
+                results[measure_name].append(np.mean(results_for_sample_size))
 
         for measure_name, runtimes in results.items():
             ax.plot(sample_sizes, runtimes, marker="o", linewidth=2, label=measure_name)
@@ -400,11 +404,14 @@ def run_experiment_1(
 def run_experiment_2(
     epsilons=(0.05, 0.1, 0.5, 1.0, 2.0),
     sample_size=300000,
+    repetitions=1,
     save=True,
     outfile="plots/experiment2.png",
     seed=123
 ):
-    """Run on one criterion each time while increasing the privacy budget epsilon."""
+    """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping criteria and the
+        number of tuples constant for every dataset and increasing the privacy budget epsilon."""
+
     def _rel_error(x, y, tiny=1e-12):
         denom = max(abs(y), tiny)  # ensure we do not divide by 0
         return abs(x - y) / denom
@@ -426,21 +433,23 @@ def run_experiment_2(
     for ax, (ds_name, spec) in zip(axes, datasets.items()):
         path = spec["path"]
         criteria = spec["criteria"]
+        cols_list = []
+        for criterion in criteria:
+            cols_list += criterion
+        data = _encode_and_clean(path, cols_list)
 
         results = {measure_name: [] for measure_name in measures.keys()}
         for measure_name, measure_cls in measures.items():
-            results_per_epsilon = {epsilon: [] for epsilon in epsilons}
-            for criterion in criteria:
-                data = _encode_and_clean(path, criterion)
-                sample = data.sample(n=min(len(data), sample_size), replace=False,
-                                     random_state=rng.randint(0, 1_000_000))
-                m = measure_cls(data=sample)
-                non_private_result = m.calculate([criterion], epsilon=None)
-                for epsilon in epsilons:
-                    private_result = m.calculate([criterion], epsilon=epsilon)
-                    results_per_epsilon[sample_size].append(_rel_error(private_result, non_private_result))
             for epsilon in epsilons:
-                results[measure_name].append(np.mean(results_per_epsilon[epsilon]))
+                results_for_epsilon = []
+                for _ in range(repetitions):
+                    n = min(sample_size, len(data))
+                    sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
+                    m = measure_cls(data=sample)
+                    non_private_result = m.calculate(criteria, epsilon=None)
+                    private_result = m.calculate(criteria, epsilon=epsilon)
+                    results_for_epsilon[sample_size].append(_rel_error(private_result, non_private_result))
+                results[measure_name].append(np.mean(results_for_epsilon))
 
         for measure_name, losses in results.items():
             ax.plot(epsilons, losses, marker="o", linewidth=2, label=measure_name)
