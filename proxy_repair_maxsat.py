@@ -63,6 +63,9 @@ class ProxyRepairMaxSat:
             cols = [protected_col, response_col] + ([admissible_col] if admissible_col is not None else [])
             if encode_and_clean:
                 df = self._encode_and_clean(self.dataset, cols)
+            else:
+                df = self.dataset
+
             D = list(df[cols].itertuples(index=False, name=None))
             D_shortened = list(set(D))
 

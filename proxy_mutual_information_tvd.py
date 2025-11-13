@@ -52,6 +52,8 @@ class ProxyMutualInformationTVD:
             cols = [protected_col, response_col] + ([admissible_col] if admissible_col is not None else [])
             if encode_and_clean:
                 df = self._encode_and_clean(self.dataset, cols)
+            else:
+                df = self.dataset
 
             if admissible_col is None:
                 tvd_proxy += self._calculate_unconditional_helper(df[protected_col].to_numpy(),

@@ -310,8 +310,6 @@ measures = {
     "Tuple Contribution": TupleContribution,
 }
 
-TIME_LIMIT = 7200  # 2 hours in seconds
-
 def _encode_and_clean(data_path, cols):
     df = pd.read_csv(data_path)
     df = df.replace(["NA", "N/A", ""], pd.NA).dropna(subset=cols).copy()
@@ -322,11 +320,11 @@ def _encode_and_clean(data_path, cols):
 
 def run_experiment_1(
     epsilon=None,
-    repeats=5,
     save=True,
     outfile="plots/experiment1.png",
     seed=123
 ):
+    """Run on one criterion each time while increasing the number of tuples."""
     sample_sizes_per_dataset = {
         "Adult": [1000, 5000, 10000, 15000, 30000],
         "IPUMS-CPS": [5000, 10000, 100000, 300000, 500000],
@@ -334,49 +332,6 @@ def run_experiment_1(
         "Compas": [1000, 1500, 3000, 7000, 10000],
         "Healthcare": [100, 200, 400, 700, 1000],
     }
-
-    def _runtime_avg_over_repeats_and_criteria(measure_name, measure_cls, data, criteria, sample_size,
-                                               repeats=repeats, epsilon=epsilon, seed=seed):
-        rng = np.random.RandomState(seed)
-        crit_times = []
-
-        for crit in criteria:
-            rep_times = []
-            for r in range(repeats):
-                n = min(sample_size, len(data))
-                sample = data.sample(n=min(len(data), sample_size), replace=False,
-                                     random_state=rng.randint(0, 1_000_000))
-                m = measure_cls(data=sample)
-
-                start_time = time.time()
-                try:
-                    _ = m.calculate([crit], epsilon=epsilon)
-                except Exception:
-                    # In case the measure fails, skip
-                    rep_times.append(np.nan)
-                    continue
-
-                elapsed = time.time() - start_time
-
-                # Skip if runtime > 2 hours
-                if elapsed > TIME_LIMIT:
-                    print(f"Skipping {measure_name} for {crit} (runtime exceeded 2h)")
-                    rep_times.append(np.nan)
-                    continue
-
-                rep_times.append(elapsed)
-            crit_times.append(np.nanmean(rep_times))
-        return float(np.nanmean(crit_times))
-
-    def _add_unique_figure_legend(fig, axes, **kwargs):
-        """Collect legend entries across all axes, dedupe by label, and add one figure-level legend."""
-        seen = {}
-        for ax in np.ravel(axes):
-            handles, labels = ax.get_legend_handles_labels()
-            for h, lbl in zip(handles, labels):
-                if lbl and lbl not in seen:
-                    seen[lbl] = h
-        fig.legend(list(seen.values()), list(seen.keys()), **kwargs)
 
     plt.rcParams.update({
         "axes.titlesize": 16,
@@ -391,20 +346,30 @@ def run_experiment_1(
     if not isinstance(axes, np.ndarray):
         axes = np.array([axes])
 
+    rng = np.random.RandomState(seed)
     for ax, (ds_name, spec) in zip(axes, datasets.items()):
         path = spec["path"]
         criteria = spec["criteria"]
         sample_sizes = sample_sizes_per_dataset[ds_name]
-        data = _encode_and_clean(path, criteria[0])
 
+        results = {measure_name: [] for measure_name in measures.keys()}
         for measure_name, measure_cls in measures.items():
-            runtimes = []
-            for n in sample_sizes:
-                t = _runtime_avg_over_repeats_and_criteria(
-                    measure_name, measure_cls, data, criteria, n, repeats=repeats, epsilon=epsilon)
-                runtimes.append(t)
+            results_per_sample_size = {sample_size: [] for sample_size in sample_sizes}
+            for criterion in criteria:
+                data = _encode_and_clean(path, criterion)
+                for sample_size in sample_sizes:
+                    n = min(sample_size, len(data))
+                    sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
+                    m = measure_cls(data=sample)
 
-            # Connect through skipped points (matplotlib ignores NaNs automatically)
+                    start_time = time.time()
+                    _ = m.calculate([criterion], epsilon=epsilon)
+                    elapsed_time = time.time() - start_time
+                    results_per_sample_size[sample_size].append(elapsed_time)
+            for sample_size in sample_sizes:
+                results[measure_name].append(np.mean(results_per_sample_size[sample_size]))
+
+        for measure_name, runtimes in results.items():
             ax.plot(sample_sizes, runtimes, marker="o", linewidth=2, label=measure_name)
 
         ax.set_title(ds_name)
@@ -412,13 +377,14 @@ def run_experiment_1(
         ax.set_ylabel("runtime (s)")
         ax.grid(True, linestyle="--", alpha=0.4)
 
-    _add_unique_figure_legend(
-        fig, axes,
-        loc="upper center",
-        ncol=4,  # tweak as you like
-        title="Measure",
-        bbox_to_anchor=(0.5, 1.08)
-    )
+    seen = {}
+    for ax in np.ravel(axes):
+        handles, labels = ax.get_legend_handles_labels()
+        for h, lbl in zip(handles, labels):
+            if lbl and lbl not in seen:
+                seen[lbl] = h
+    fig.legend(list(seen.values()), list(seen.keys()), loc="upper center", ncol=4, title="Measure",
+               bbox_to_anchor=(0.5, 1.08))
 
     fig.suptitle("Runtime as function of Sample Size", y=1.02)
     fig.tight_layout()
@@ -428,31 +394,20 @@ def run_experiment_1(
         os.makedirs(os.path.dirname(outfile), exist_ok=True)
         plt.savefig(outfile, dpi=180, bbox_inches="tight")
         print(f"Saved {outfile}")
-
     plt.show()
 
 
 def run_experiment_2(
     epsilons=(0.05, 0.1, 0.5, 1.0, 2.0),
     sample_size=300000,
-    repeats=5,
     save=True,
     outfile="plots/experiment2.png",
     seed=123
 ):
+    """Run on one criterion each time while increasing the privacy budget epsilon."""
     def _rel_error(x, y, tiny=1e-12):
-        denom = max(abs(y), tiny)
+        denom = max(abs(y), tiny)  # ensure we do not divide by 0
         return abs(x - y) / denom
-
-    def _add_unique_figure_legend(fig, axes, **kwargs):
-        """Collect legend entries across all axes, dedupe by label, and add one figure-level legend."""
-        seen = {}
-        for ax in np.ravel(axes):
-            handles, labels = ax.get_legend_handles_labels()
-            for h, lbl in zip(handles, labels):
-                if lbl and lbl not in seen:
-                    seen[lbl] = h
-        fig.legend(list(seen.values()), list(seen.keys()), **kwargs)
 
     plt.rcParams.update({
         "axes.titlesize": 16,
@@ -467,64 +422,42 @@ def run_experiment_2(
     if not isinstance(axes, np.ndarray):
         axes = np.array([axes])
 
+    rng = np.random.RandomState(seed)
     for ax, (ds_name, spec) in zip(axes, datasets.items()):
-        rng = np.random.RandomState(seed)
         path = spec["path"]
         criteria = spec["criteria"]
-        data = _encode_and_clean(path, criteria[0])
-        sample = data.sample(n=min(len(data), sample_size), replace=False,
-                             random_state=rng.randint(0, 1_000_000))
 
-        baselines = []
+        results = {measure_name: [] for measure_name in measures.keys()}
         for measure_name, measure_cls in measures.items():
-            Y = []
-            for crit in criteria:
+            results_per_epsilon = {epsilon: [] for epsilon in epsilons}
+            for criterion in criteria:
+                data = _encode_and_clean(path, criterion)
+                sample = data.sample(n=min(len(data), sample_size), replace=False,
+                                     random_state=rng.randint(0, 1_000_000))
                 m = measure_cls(data=sample)
-                y_val = m.calculate([crit], epsilon=None)
-                Y.append(float(y_val))
-            baselines.append((measure_name, np.array(Y, dtype=float)))
+                non_private_result = m.calculate([criterion], epsilon=None)
+                for epsilon in epsilons:
+                    private_result = m.calculate([criterion], epsilon=epsilon)
+                    results_per_epsilon[sample_size].append(_rel_error(private_result, non_private_result))
+            for epsilon in epsilons:
+                results[measure_name].append(np.mean(results_per_epsilon[epsilon]))
 
-        for (measure_name, measure_cls), (_, Y_vec) in zip(measures.items(), baselines):
-            rel_errors_for_eps = []
-            for eps in epsilons:
-                crit_means = []
-                for crit_idx, crit in enumerate(criteria):
-                    y = Y_vec[crit_idx]
-                    reps = []
-                    for r in range(repeats):
-                        m = measure_cls(data=sample)
-                        start_time = time.time()
-                        try:
-                            x = float(m.calculate([crit], epsilon=eps))
-                        except Exception:
-                            reps.append(np.nan)
-                            continue
-                        elapsed = time.time() - start_time
-
-                        # Skip if computation exceeds 2 hours (for RepairMaxSat only)
-                        if elapsed > TIME_LIMIT:
-                            print(f"Skipping {measure_name} for {crit} at ε={eps} (runtime > 2h)")
-                            reps.append(np.nan)
-                            continue
-
-                        reps.append(_rel_error(x, y))
-                    crit_means.append(np.nanmean(reps))
-                rel_errors_for_eps.append(np.nanmean(crit_means))
-
-            ax.plot(epsilons, rel_errors_for_eps, marker="o", linewidth=2, label=measure_name)
+        for measure_name, losses in results.items():
+            ax.plot(epsilons, losses, marker="o", linewidth=2, label=measure_name)
 
         ax.set_title(ds_name)
         ax.set_xlabel("privacy budget ε")
         ax.set_ylabel("relative L1 error")
         ax.grid(True, linestyle="--", alpha=0.4)
 
-    _add_unique_figure_legend(
-        fig, axes,
-        loc="upper center",
-        ncol=4,  # tweak as you like
-        title="Measure",
-        bbox_to_anchor=(0.5, 1.08)
-    )
+    seen = {}
+    for ax in np.ravel(axes):
+        handles, labels = ax.get_legend_handles_labels()
+        for h, lbl in zip(handles, labels):
+            if lbl and lbl not in seen:
+                seen[lbl] = h
+    fig.legend(list(seen.values()), list(seen.keys()), loc="upper center", ncol=4, title="Measure",
+               bbox_to_anchor=(0.5, 1.08))
 
     fig.suptitle("Relative L1 Error as function of Privacy Budget", y=1.02)
     fig.tight_layout()
@@ -534,8 +467,8 @@ def run_experiment_2(
         os.makedirs(os.path.dirname(outfile), exist_ok=True)
         plt.savefig(outfile, dpi=180, bbox_inches="tight")
         print(f"Saved {outfile}")
-
     plt.show()
+
 
 def run_experiment_3():
     # ==== DP-SGD / training params ====
@@ -642,54 +575,37 @@ def run_experiment_3():
             yhat = model(X_t).cpu().numpy().reshape(-1)
         return np.clip(yhat, 0.0, 1.0)
 
-    # ==== safety: check columns exist before calling _encode_and_clean ====
-    def _has_all_columns(csv_path: str, cols: list) -> bool:
-        try:
-            header = pd.read_csv(csv_path, nrows=0)
-            return set(cols).issubset(set(header.columns))
-        except Exception:
-            return False
-
     # === Core loop over datasets and criteria (expects `datasets` to be defined in scope) ===
     for ds_name, spec in datasets.items():
         print(f"\n=== DATASET: {ds_name} ===")
         path = spec["path"]
-        crits = spec["criteria"]
+        criteria = spec["criteria"]
 
         # results dicts: criterion (lowercase) -> (mae, csp)
         results_linear: Dict[str, Tuple[float, float]] = {}
         results_mlp:    Dict[str, Tuple[float, float]] = {}
 
-        for crit in crits:
-            protected, response = crit[0], crit[1]
-            admissible = crit[2] if len(crit) == 3 else None
-            cols_needed = [protected, response] + ([admissible] if admissible else [])
-            # lowercase label
-            crit_label = (f"{protected}->{response}|{admissible}" if admissible else f"{protected}->{response}").lower()
-
-            if not _has_all_columns(path, cols_needed):
-                print(f"Skipping {crit_label}: missing columns in {path}")
-                continue
-
-            # preprocess ONLY the needed columns (as you requested)
-            df_enc = _encode_and_clean(path, cols_needed)
+        for criterion in criteria:
+            protected, response, admissible = criterion[0], criterion[1], criterion[2]
+            crit_label = f"{protected}->{response} | {admissible}".lower()
+            df = _encode_and_clean(path, criterion)
 
             # choose features: use encoded protected + admissible; target is encoded response
             feat_cols = [protected] + ([admissible] if admissible else [])
-            X_full = df_enc[feat_cols].to_numpy(dtype=float)
-            y_full = df_enc[response].to_numpy(dtype=float)
+            X_full = df[feat_cols].to_numpy(dtype=float)
+            y_full = df[response].to_numpy(dtype=float)
 
             # normalize y into [0,1] so MAE is well-behaved (in case label encoder created >2 classes)
             if np.ptp(y_full) > 0:
                 y_full = (y_full - y_full.min()) / (np.ptp(y_full))
 
             # limit training size
-            n_total = len(df_enc)
+            n_total = len(df)
             n_use = int(min(n_total, 300000))
             if n_use < n_total:
-                df_enc = df_enc.sample(n=n_use, random_state=RANDOM_STATE)
-                X_full = df_enc[feat_cols].to_numpy(dtype=float)
-                y_full = df_enc[response].to_numpy(dtype=float)
+                df = df.sample(n=n_use, random_state=RANDOM_STATE)
+                X_full = df[feat_cols].to_numpy(dtype=float)
+                y_full = df[response].to_numpy(dtype=float)
                 if np.ptp(y_full) > 0:
                     y_full = (y_full - y_full.min()) / (np.ptp(y_full))
 
@@ -707,16 +623,16 @@ def run_experiment_3():
             )
 
             # protected/admissible series for CSP on TEST split
-            prot_test = df_enc[protected].iloc[X_test.shape[0]*0:len(X_test)].reset_index(drop=True)  # placeholder
+            prot_test = df[protected].iloc[X_test.shape[0] * 0:len(X_test)].reset_index(drop=True)  # placeholder
             # Better: recompute masks from the same split indices
             # build indices by a second split call with return of indices
             idx_all = np.arange(len(X_full))
             _, idx_test = train_test_split(
                 idx_all, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=stratify
             )
-            prot_test = df_enc[protected].iloc[idx_test].reset_index(drop=True)
+            prot_test = df[protected].iloc[idx_test].reset_index(drop=True)
             if admissible:
-                adm_test = df_enc[admissible].iloc[idx_test].reset_index(drop=True)
+                adm_test = df[admissible].iloc[idx_test].reset_index(drop=True)
             else:
                 # if no admissible, make a single-group placeholder (all zeros)
                 adm_test = pd.Series(np.zeros(len(idx_test), dtype=int))
@@ -755,4 +671,4 @@ if __name__ == "__main__":
     # create_plot_2()
     run_experiment_1()
     run_experiment_2()
-    run_experiment_3()
+    # run_experiment_3()

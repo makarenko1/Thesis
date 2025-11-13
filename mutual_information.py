@@ -55,6 +55,8 @@ class MutualInformation:
             cols = [protected_col, response_col] + ([admissible_col] if admissible_col is not None else [])
             if encode_and_clean:
                 df = self._encode_and_clean(self.dataset, cols)
+            else:
+                df = self.dataset
 
             mi += self._calculate_helper(df[protected_col].to_numpy(), df[response_col].to_numpy(),
                                          df[admissible_col].to_numpy() if admissible_col else None)
