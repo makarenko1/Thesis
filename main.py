@@ -310,7 +310,7 @@ measures = {
     "Tuple Contribution": TupleContribution,
 }
 
-timeout_seconds = 2 * 60 * 60  # 2 hours
+timeout_seconds = 1 * 60 * 60
 
 def _encode_and_clean(data_path, cols):
     df = pd.read_csv(data_path)
@@ -338,11 +338,11 @@ def run_experiment_1(
     }
 
     plt.rcParams.update({
-        "axes.titlesize": 16,
-        "axes.labelsize": 14,
-        "xtick.labelsize": 12,
+        "axes.titlesize": 18,
+        "axes.labelsize": 16,
+        "xtick.labelsize": 14,
         "ytick.labelsize": 12,
-        "legend.fontsize": 12,
+        "legend.fontsize": 14,
         "figure.titlesize": 18,
     })
 
@@ -362,7 +362,11 @@ def run_experiment_1(
 
         results = {measure_name: [] for measure_name in measures.keys()}
         for measure_name, measure_cls in measures.items():
+            flag_timeout = False
             for sample_size in sample_sizes:
+                if flag_timeout:
+                    print("Skipping iteration because got timeout for smaller sample size.")
+                    continue
                 results_for_sample_size = []
                 for _ in range(repetitions):
                     n = min(sample_size, len(data))
@@ -378,17 +382,17 @@ def run_experiment_1(
                         except TimeoutError:
                             print("Skipping the iteration due to timeout.")
                             results_for_sample_size.append(np.nan)
+                            flag_timeout = True
                             break
                 results[measure_name].append(np.nan if np.any(np.isnan(results_for_sample_size)) else
                                              np.mean(results_for_sample_size))
 
         for measure_name, runtimes in results.items():
-            ax.plot(sample_sizes, runtimes, marker="o", linewidth=2, label=measure_name)
+            ax.plot([str(sample_size // 1000) + "K" if sample_size % 1000 == 0 else str(sample_size) for sample_size in
+                     sample_sizes], runtimes, marker="o", linewidth=2, label=measure_name)
 
         ax.set_yscale('log')
         ax.set_title(ds_name)
-        ax.set_xlabel("sample size")
-        ax.set_ylabel("runtime (s), log scale")
         ax.grid(True, linestyle="--", alpha=0.4)
 
     seen = {}
@@ -397,9 +401,10 @@ def run_experiment_1(
         for h, lbl in zip(handles, labels):
             if lbl and lbl not in seen:
                 seen[lbl] = h
-    fig.legend(list(seen.values()), list(seen.keys()), loc="upper center", ncol=4, title="Measure",
-               bbox_to_anchor=(0.5, 1.08))
-
+    axes[0].set_xlabel("sample size")
+    axes[0].set_ylabel("runtime (s), log scale")
+    axes[len(axes) - 1].legend(list(seen.values()), list(seen.keys()), title="Measure", loc="center right",
+                               bbox_to_anchor=(0.98, 0.5), ncol=1, fontsize=8)
     fig.suptitle("Runtime as function of Sample Size", y=1.02)
     fig.tight_layout()
 
@@ -422,11 +427,11 @@ def run_experiment_2(
     """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping sample size
         constant and increasing the number of criteria in the set."""
     plt.rcParams.update({
-        "axes.titlesize": 16,
-        "axes.labelsize": 14,
-        "xtick.labelsize": 12,
+        "axes.titlesize": 18,
+        "axes.labelsize": 16,
+        "xtick.labelsize": 14,
         "ytick.labelsize": 12,
-        "legend.fontsize": 12,
+        "legend.fontsize": 14,
         "figure.titlesize": 18,
     })
 
@@ -472,7 +477,6 @@ def run_experiment_2(
         ax.set_yscale('log')
         ax.set_title(ds_name)
         ax.set_xlabel("number of criteria")
-        ax.set_ylabel("runtime (s), log scale")
         ax.grid(True, linestyle="--", alpha=0.4)
 
     seen = {}
@@ -481,9 +485,10 @@ def run_experiment_2(
         for h, lbl in zip(handles, labels):
             if lbl and lbl not in seen:
                 seen[lbl] = h
-    fig.legend(list(seen.values()), list(seen.keys()), loc="upper center", ncol=4, title="Measure",
-               bbox_to_anchor=(0.5, 1.08))
-
+    axes[0].set_xlabel("sample size")
+    axes[0].set_ylabel("runtime (s), log scale")
+    axes[0].legend(list(seen.values()), list(seen.keys()), title="Measure", loc="center right",
+                   bbox_to_anchor=(0.98, 0.5), ncol=1, fontsize=8)
     fig.suptitle("Runtime as function of Number of Criteria", y=1.02)
     fig.tight_layout()
 
@@ -511,11 +516,11 @@ def run_experiment_3(
         return abs(x - y) / denom
 
     plt.rcParams.update({
-        "axes.titlesize": 16,
-        "axes.labelsize": 14,
-        "xtick.labelsize": 12,
+        "axes.titlesize": 18,
+        "axes.labelsize": 16,
+        "xtick.labelsize": 14,
         "ytick.labelsize": 12,
-        "legend.fontsize": 12,
+        "legend.fontsize": 14,
         "figure.titlesize": 18,
     })
 
@@ -558,8 +563,6 @@ def run_experiment_3(
             ax.plot(epsilons, losses, marker="o", linewidth=2, label=measure_name)
 
         ax.set_title(ds_name)
-        ax.set_xlabel("privacy budget ε")
-        ax.set_ylabel("relative L1 error")
         ax.grid(True, linestyle="--", alpha=0.4)
 
     seen = {}
@@ -568,9 +571,10 @@ def run_experiment_3(
         for h, lbl in zip(handles, labels):
             if lbl and lbl not in seen:
                 seen[lbl] = h
-    fig.legend(list(seen.values()), list(seen.keys()), loc="upper center", ncol=4, title="Measure",
-               bbox_to_anchor=(0.5, 1.08))
-
+    axes[0].set_xlabel("privacy budget ε")
+    axes[0].set_ylabel("runtime (s), log scale")
+    axes[0].legend(list(seen.values()), list(seen.keys()), title="Measure", loc="center right",
+                   bbox_to_anchor=(0.98, 0.5), ncol=1, fontsize=8)
     fig.suptitle("Relative L1 Error as function of Privacy Budget", y=1.02)
     fig.tight_layout()
 
