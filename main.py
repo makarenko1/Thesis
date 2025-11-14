@@ -366,6 +366,7 @@ def run_experiment_1(
             for sample_size in sample_sizes:
                 if flag_timeout:
                     print("Skipping iteration because got timeout for smaller sample size.")
+                    results[measure_name].append(np.nan)
                     continue
                 results_for_sample_size = []
                 for _ in range(repetitions):
@@ -384,8 +385,7 @@ def run_experiment_1(
                             results_for_sample_size.append(np.nan)
                             flag_timeout = True
                             break
-                results[measure_name].append(np.nan if np.any(np.isnan(results_for_sample_size)) else
-                                             np.mean(results_for_sample_size))
+                results[measure_name].append(np.mean(results_for_sample_size))
 
         for measure_name, runtimes in results.items():
             ax.plot([str(sample_size // 1000) + "K" if sample_size % 1000 == 0 else str(sample_size) for sample_size in
@@ -450,8 +450,15 @@ def run_experiment_2(
 
         results = {measure_name: [] for measure_name in measures.keys()}
         for measure_name, measure_cls in measures.items():
+            flag_timeout = False
             for num_criteria in range(1, len(criteria) + 1):
                 results_for_num_criteria = []
+                # if ((measure_name == "Proxy RepairMaxSat" and path in ["data/census.csv", "data/stackoverflow.csv"]) or
+                #         flag_timeout):
+                if flag_timeout:
+                    print("Skipping iteration because got timeout for smaller sample size.")
+                    results[measure_name].append(np.nan)
+                    continue
                 for _ in range(repetitions):
                     n = min(sample_size, len(data))
                     sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
@@ -466,6 +473,7 @@ def run_experiment_2(
                         except TimeoutError:
                             print("Skipping the iteration due to timeout.")
                             results_for_num_criteria.append(np.nan)
+                            flag_timeout = True
                             break
                 results[measure_name].append(np.nan if np.any(np.isnan(results_for_num_criteria)) else
                                              np.mean(results_for_num_criteria))
@@ -785,6 +793,6 @@ def run_experiment_4():
 if __name__ == "__main__":
     # create_plot_1()
     # create_plot_2()
-    run_experiment_1()
-    # run_experiment_2()
+    # run_experiment_1()
+    run_experiment_2()
     # run_experiment_3()
