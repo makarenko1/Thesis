@@ -338,12 +338,12 @@ def run_experiment_1(
     }
 
     plt.rcParams.update({
-        "axes.titlesize": 18,
-        "axes.labelsize": 16,
-        "xtick.labelsize": 14,
-        "ytick.labelsize": 12,
-        "legend.fontsize": 14,
-        "figure.titlesize": 18,
+        "axes.titlesize": 20,
+        "axes.labelsize": 18,
+        "xtick.labelsize": 16,
+        "ytick.labelsize": 16,
+        "legend.fontsize": 10,
+        "figure.titlesize": 20,
     })
 
     fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
@@ -365,7 +365,7 @@ def run_experiment_1(
             flag_timeout = False
             for sample_size in sample_sizes:
                 if flag_timeout:
-                    print("Skipping iteration because got timeout for smaller sample size.")
+                    print("Skipping next iterations because got timeout for smaller sample size.")
                     results[measure_name].append(np.nan)
                     continue
                 results_for_sample_size = []
@@ -404,7 +404,7 @@ def run_experiment_1(
     axes[0].set_xlabel("sample size")
     axes[0].set_ylabel("runtime (s), log scale")
     axes[len(axes) - 1].legend(list(seen.values()), list(seen.keys()), title="Measure", loc="center right",
-                               bbox_to_anchor=(0.98, 0.5), ncol=1, fontsize=8)
+                               bbox_to_anchor=(0.98, 0.5), ncol=1)
     fig.suptitle("Runtime as function of Sample Size", y=1.02)
     fig.tight_layout()
 
@@ -418,21 +418,21 @@ def run_experiment_1(
 
 def run_experiment_2(
     epsilon=None,
-    sample_size=300000,
+    sample_size=100000,
     repetitions=1,
     save=True,
-    outfile="plots/experiment2.png",
+    outfile="plots/experiment2_smaller_sample_size.png",
     seed=123
 ):
     """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping sample size
         constant and increasing the number of criteria in the set."""
     plt.rcParams.update({
-        "axes.titlesize": 18,
-        "axes.labelsize": 16,
-        "xtick.labelsize": 14,
-        "ytick.labelsize": 12,
-        "legend.fontsize": 14,
-        "figure.titlesize": 18,
+        "axes.titlesize": 20,
+        "axes.labelsize": 18,
+        "xtick.labelsize": 16,
+        "ytick.labelsize": 16,
+        "legend.fontsize": 10,
+        "figure.titlesize": 20,
     })
 
     fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
@@ -453,10 +453,8 @@ def run_experiment_2(
             flag_timeout = False
             for num_criteria in range(1, len(criteria) + 1):
                 results_for_num_criteria = []
-                # if ((measure_name == "Proxy RepairMaxSat" and path in ["data/census.csv", "data/stackoverflow.csv"]) or
-                #         flag_timeout):
                 if flag_timeout:
-                    print("Skipping iteration because got timeout for smaller sample size.")
+                    print("Skipping next iterations because got timeout for smaller sample size.")
                     results[measure_name].append(np.nan)
                     continue
                 for _ in range(repetitions):
@@ -479,12 +477,11 @@ def run_experiment_2(
                                              np.mean(results_for_num_criteria))
 
         for measure_name, runtimes in results.items():
-            ax.plot([num_criteria for num_criteria in range(1, len(criteria) + 1)], runtimes, marker="o",
+            ax.plot([str(int(num_criteria)) for num_criteria in range(1, len(criteria) + 1)], runtimes, marker="o",
                     linewidth=2, label=measure_name)
 
         ax.set_yscale('log')
         ax.set_title(ds_name)
-        ax.set_xlabel("number of criteria")
         ax.grid(True, linestyle="--", alpha=0.4)
 
     seen = {}
@@ -493,11 +490,11 @@ def run_experiment_2(
         for h, lbl in zip(handles, labels):
             if lbl and lbl not in seen:
                 seen[lbl] = h
-    axes[0].set_xlabel("sample size")
+    axes[0].set_xlabel("number of criteria")
     axes[0].set_ylabel("runtime (s), log scale")
-    axes[0].legend(list(seen.values()), list(seen.keys()), title="Measure", loc="center right",
-                   bbox_to_anchor=(0.98, 0.5), ncol=1, fontsize=8)
-    fig.suptitle("Runtime as function of Number of Criteria", y=1.02)
+    axes[-1].legend(list(seen.values()), list(seen.keys()), title="Measure", loc="center right",
+                   bbox_to_anchor=(0.98, 0.5), ncol=1)
+    fig.suptitle(f"Runtime as function of Number of Criteria, sample size at most {round(sample_size / 1000)}K", y=1.02)
     fig.tight_layout()
 
     if save:
@@ -510,7 +507,7 @@ def run_experiment_2(
 
 def run_experiment_3(
     epsilons=(0.05, 0.1, 0.5, 1.0, 2.0),
-    sample_size=300000,
+    sample_size=100000,
     repetitions=1,
     save=True,
     outfile="plots/experiment3.png",
@@ -524,12 +521,12 @@ def run_experiment_3(
         return abs(x - y) / denom
 
     plt.rcParams.update({
-        "axes.titlesize": 18,
-        "axes.labelsize": 16,
-        "xtick.labelsize": 14,
-        "ytick.labelsize": 12,
-        "legend.fontsize": 14,
-        "figure.titlesize": 18,
+        "axes.titlesize": 20,
+        "axes.labelsize": 18,
+        "xtick.labelsize": 16,
+        "ytick.labelsize": 16,
+        "legend.fontsize": 10,
+        "figure.titlesize": 20,
     })
 
     fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
@@ -580,10 +577,11 @@ def run_experiment_3(
             if lbl and lbl not in seen:
                 seen[lbl] = h
     axes[0].set_xlabel("privacy budget ε")
-    axes[0].set_ylabel("runtime (s), log scale")
+    axes[0].set_ylabel("relative L1 error")
     axes[0].legend(list(seen.values()), list(seen.keys()), title="Measure", loc="center right",
-                   bbox_to_anchor=(0.98, 0.5), ncol=1, fontsize=8)
-    fig.suptitle("Relative L1 Error as function of Privacy Budget", y=1.02)
+                   bbox_to_anchor=(0.98, 0.5), ncol=1)
+    fig.suptitle(f"Relative L1 Error as function of Privacy Budget, sample size at most {round(sample_size / 1000)}K",
+                 y=1.02)
     fig.tight_layout()
 
     if save:
@@ -794,5 +792,5 @@ if __name__ == "__main__":
     # create_plot_1()
     # create_plot_2()
     # run_experiment_1()
-    run_experiment_2()
-    # run_experiment_3()
+    # run_experiment_2()
+    run_experiment_3()

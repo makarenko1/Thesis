@@ -1,5 +1,6 @@
 import time
 from collections import defaultdict
+from itertools import combinations
 
 import numpy as np
 import pandas as pd
@@ -105,8 +106,8 @@ class ProxyRepairMaxSat:
         elapsed_time = time.time() - start_time
         print(
             f"Repair MaxSAT: Proxy Repair MaxSAT for fairness criteria {fairness_criteria}: "
-            f"{repair:.4f} with epsilon: {epsilon if epsilon is not None else 'infinity'}. "
-            f"Calculation took {elapsed_time:.3f} seconds."
+            f"{repair:.4f} with data size: {len(self.dataset)} and epsilon: "
+            f"{epsilon if epsilon is not None else 'infinity'}. Calculation took {elapsed_time:.3f} seconds."
         )
         return repair
 
@@ -182,36 +183,70 @@ class ProxyRepairMaxSat:
                 soft_clauses.add(Not(x_t))
 
         # Step 3: Enforce MVD 3CNF constraints
-        C = set()
+        # OLD MEMORY INEFFICIENT:
+        # C = set()
+        # if admissible_col is not None:
+        #     for (s1, o1, a1) in D_star:
+        #         for (s2, o2, a2) in D_star:
+        #             if a1 == a2 and s1 != s2 and o1 != o2:
+        #                 C.add((s1, o1, s2, o2, a1))
+        # else:
+        #     for (s1, o1) in D_star:
+        #         for (s2, o2) in D_star:
+        #             if s1 != s2 and o1 != o2:
+        #                 C.add((s1, o1, s2, o2))
+        #
+        # used_keys = set()
+        # for t in C:
+        #     if admissible_col is not None:
+        #         s1, o1, s2, o2, a = t
+        #         t1 = (s1, o1, a)
+        #         t2 = (s2, o2, a)
+        #         t3 = (s1, o2, a)
+        #     else:
+        #         s1, o1, s2, o2 = t
+        #         t1 = (s1, o1)
+        #         t2 = (s2, o2)
+        #         t3 = (s1, o2)
+        #     x_t1 = Bool(f"x_{t1}")
+        #     x_t2 = Bool(f"x_{t2}")
+        #     x_t3 = Bool(f"x_{t3}")
+        #     key = ProxyRepairMaxSat._clause_key(t1, t2, t3)
+        #     if key not in used_keys and ProxyRepairMaxSat._clause_key(t2, t1, t3) not in used_keys:
+        #         hard_clauses.add(Or(Not(x_t1), Not(x_t2), x_t3))
+        #         used_keys.add(key)
+        # ----------------------------------------------------------------------------------------------------
+        # NEW MEMORY EFFICIENT:
         if admissible_col is not None:
-            for (s1, o1, a1) in D_star:
-                for (s2, o2, a2) in D_star:
-                    if a1 == a2 and s1 != s2 and o1 != o2:
-                        C.add((s1, o1, s2, o2, a1))
-        else:
-            for (s1, o1) in D_star:
-                for (s2, o2) in D_star:
-                    if s1 != s2 and o1 != o2:
-                        C.add((s1, o1, s2, o2))
+            # group unique (s,o) pairs by each admissible value a
+            group_by_a_star = defaultdict(set)
+            for (s, o, a) in D_star:
+                group_by_a_star[a].add((s, o))
 
-        used_keys = set()
-        for t in C:
-            if admissible_col is not None:
-                s1, o1, s2, o2, a = t
-                t1 = (s1, o1, a)
-                t2 = (s2, o2, a)
-                t3 = (s1, o2, a)
-            else:
-                s1, o1, s2, o2 = t
+            for a, pairs in group_by_a_star.items():
+                uniq_pairs = list(pairs)  # unique (s,o) for this a
+                for (s1, o1), (s2, o2) in combinations(uniq_pairs, 2):
+                    if s1 == s2 or o1 == o2:
+                        continue
+                    t1 = (s1, o1, a)
+                    t2 = (s2, o2, a)
+                    t3 = (s1, o2, a)
+                    x_t1 = Bool(f"x_{t1}")
+                    x_t2 = Bool(f"x_{t2}")
+                    x_t3 = Bool(f"x_{t3}")
+                    hard_clauses.add(Or(Not(x_t1), Not(x_t2), x_t3))
+        else:
+            # unconditional: unique (s,o) pairs across all D_star
+            uniq_pairs = list(set(D_star))  # D_star already contains (s,o)
+            for (s1, o1), (s2, o2) in combinations(uniq_pairs, 2):
+                if s1 == s2 or o1 == o2:
+                    continue
                 t1 = (s1, o1)
                 t2 = (s2, o2)
                 t3 = (s1, o2)
-            x_t1 = Bool(f"x_{t1}")
-            x_t2 = Bool(f"x_{t2}")
-            x_t3 = Bool(f"x_{t3}")
-            key = ProxyRepairMaxSat._clause_key(t1, t2, t3)
-            if key not in used_keys and ProxyRepairMaxSat._clause_key(t2, t1, t3) not in used_keys:
+                x_t1 = Bool(f"x_{t1}")
+                x_t2 = Bool(f"x_{t2}")
+                x_t3 = Bool(f"x_{t3}")
                 hard_clauses.add(Or(Not(x_t1), Not(x_t2), x_t3))
-                used_keys.add(key)
 
         return soft_clauses, hard_clauses, D_star
