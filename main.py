@@ -541,22 +541,28 @@ def run_experiment_3(
         for criterion in criteria:
             cols_list += criterion
         data = _encode_and_clean(path, cols_list)
+        n = min(sample_size, len(data))
+        sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
 
         results = {measure_name: [] for measure_name in measures.keys()}
         for measure_name, measure_cls in measures.items():
+            m = measure_cls(data=sample)
+            with ThreadPoolExecutor() as executor:
+                try:
+                    non_private_result = executor.submit(m.calculate, criteria, epsilon=None).result(
+                        timeout=timeout_seconds)
+                except TimeoutError:
+                    print("Skipping the iteration due to timeout.")
+                    results[measure_name] += [np.nan] * len(epsilons)
+                    continue
             for epsilon in epsilons:
                 results_for_epsilon = []
                 for _ in range(repetitions):
-                    n = min(sample_size, len(data))
-                    sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
-                    m = measure_cls(data=sample)
                     with ThreadPoolExecutor() as executor:
                         try:
-                            non_private_result = executor.submit(m.calculate, criteria, epsilon=None).result(
-                                timeout=timeout_seconds)
                             private_result = executor.submit(m.calculate, criteria, epsilon=epsilon).result(
                                 timeout=timeout_seconds)
-                            results_for_epsilon[sample_size].append(_rel_error(private_result, non_private_result))
+                            results_for_epsilon.append(_rel_error(private_result, non_private_result))
                         except TimeoutError:
                             print("Skipping the iteration due to timeout.")
                             results_for_epsilon.append(np.nan)
@@ -578,7 +584,7 @@ def run_experiment_3(
                 seen[lbl] = h
     axes[0].set_xlabel("privacy budget ε")
     axes[0].set_ylabel("relative L1 error")
-    axes[0].legend(list(seen.values()), list(seen.keys()), title="Measure", loc="center right",
+    axes[-1].legend(list(seen.values()), list(seen.keys()), title="Measure", loc="center right",
                    bbox_to_anchor=(0.98, 0.5), ncol=1)
     fig.suptitle(f"Relative L1 Error as function of Privacy Budget, sample size at most {round(sample_size / 1000)}K",
                  y=1.02)
