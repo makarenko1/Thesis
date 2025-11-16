@@ -100,7 +100,7 @@ class ProxyRepairMaxSat:
         repair = len(list_symmetric_difference)
 
         if epsilon is not None:
-            sensitivity = 2
+            sensitivity = 2 * len(fairness_criteria)
             repair = repair + np.random.laplace(loc=0, scale=sensitivity / epsilon)
 
         elapsed_time = time.time() - start_time
