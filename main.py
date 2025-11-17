@@ -322,7 +322,7 @@ def _encode_and_clean(data_path, cols):
 
 def run_experiment_1(
     epsilon=None,
-    repetitions=1,
+    repetitions=5,
     save=True,
     outfile="plots/experiment1.png",
     seed=123
@@ -362,6 +362,9 @@ def run_experiment_1(
 
         results = {measure_name: [] for measure_name in measures.keys()}
         for measure_name, measure_cls in measures.items():
+            # if measure_name == "Proxy RepairMaxSat" and path in ["data/census.csv", "data/stackoverflow.csv"]:
+            #     results[measure_name] += [np.nan] * len(sample_sizes)
+            #     continue
             flag_timeout = False
             for sample_size in sample_sizes:
                 if flag_timeout:
@@ -419,9 +422,9 @@ def run_experiment_1(
 def run_experiment_2(
     epsilon=None,
     sample_size=100000,
-    repetitions=1,
+    repetitions=5,
     save=True,
-    outfile="plots/experiment2_smaller_sample_size.png",
+    outfile="plots/experiment2.png",
     seed=123
 ):
     """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping sample size
@@ -452,6 +455,10 @@ def run_experiment_2(
         for measure_name, measure_cls in measures.items():
             flag_timeout = False
             for num_criteria in range(1, len(criteria) + 1):
+                # if measure_name == "Proxy RepairMaxSat" and (path == "data/census.csv" or
+                #                                              (path == "data/stackoverflow.csv" and num_criteria > 2)):
+                #     results[measure_name].append(np.nan)
+                #     continue
                 results_for_num_criteria = []
                 if flag_timeout:
                     print("Skipping next iterations because got timeout for smaller sample size.")
@@ -506,9 +513,9 @@ def run_experiment_2(
 
 
 def run_experiment_3(
-    epsilons=(0.05, 0.1, 0.5, 1.0, 2.0),
+    epsilons=(0.1, 1, 5, 10),
     sample_size=100000,
-    repetitions=1,
+    repetitions=5,
     save=True,
     outfile="plots/experiment3.png",
     seed=123
@@ -547,6 +554,9 @@ def run_experiment_3(
         results = {measure_name: [] for measure_name in measures.keys()}
         for measure_name, measure_cls in measures.items():
             m = measure_cls(data=sample)
+            # if measure_name == "Proxy RepairMaxSat" and path in ["data/census.csv", "data/stackoverflow.csv"]:
+            #     results[measure_name] += [np.nan] * len(epsilons)
+            #     continue
             with ThreadPoolExecutor() as executor:
                 try:
                     non_private_result = executor.submit(m.calculate, criteria, epsilon=None).result(
@@ -799,4 +809,5 @@ if __name__ == "__main__":
     # create_plot_2()
     # run_experiment_1()
     # run_experiment_2()
-    run_experiment_3()
+    # run_experiment_3()
+    run_experiment_4()
