@@ -1,16 +1,18 @@
 import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple, Dict
 
 import numpy as np
 import pandas as pd
 import torch
 from matplotlib import pyplot as plt
+from opacus import PrivacyEngine
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from concurrent.futures import ThreadPoolExecutor
 from mutual_information import MutualInformation
 from proxy_mutual_information_tvd import ProxyMutualInformationTVD
 from proxy_repair_maxsat import ProxyRepairMaxSat
@@ -608,11 +610,15 @@ def run_experiment_3(
     plt.show()
 
 
-def run_experiment_4():
+def run_experiment_4(
+        epsilon=1,
+        sample_size=100000,
+        repetitions=5
+):
     # ==== DP-SGD / training params ====
     DP_NOISE_MULT = 1.0        # Gaussian noise multiplier
     DP_MAX_GRAD_NORM = 1.0     # Per-sample clipping norm
-    BATCH_SIZE = 300000        # you asked for this value; we'll batch smaller if sample is smaller
+    BATCH_SIZE = 300000        # we'll batch smaller if sample is smaller
     EPOCHS = 5
     LR = 1e-2
     POS_THRESHOLD = 0.5        # for CSP thresholding of predictions
@@ -620,9 +626,12 @@ def run_experiment_4():
 
     TEST_SIZE = 0.3
     RANDOM_STATE = 42
+    SAMPLE_SIZE = 100000       # requested sample size
+    EPSILON = 1.0              # requested epsilon for proxies
 
     # ==== Models ====
     class DPLinear(nn.Module):
+        """Regression model (DP-linear with sigmoid)."""
         def __init__(self, in_dim: int):
             super().__init__()
             self.linear = nn.Linear(in_dim, 1)
@@ -630,6 +639,7 @@ def run_experiment_4():
             return torch.sigmoid(self.linear(x))  # keep outputs in [0,1]
 
     class DPMLP(nn.Module):
+        """Random Forest proxy model (DP-MLP with sigmoid)."""
         def __init__(self, in_dim: int, hidden: int = 64):
             super().__init__()
             self.net = nn.Sequential(
@@ -669,7 +679,7 @@ def run_experiment_4():
         return float(np.sum(weighted_gaps)) if weighted_gaps else 0.0
 
     # ==== Torch helpers ====
-    def _to_torch(X: np.ndarray, y: np.ndarray) -> Tuple[TensorDataset, int]:
+    def _to_torch(X: np.ndarray, y: np.ndarray) -> tuple[TensorDataset, int]:
         X_t = torch.tensor(X, dtype=torch.float32)
         y_t = torch.tensor(y, dtype=torch.float32).reshape(-1, 1)
         return TensorDataset(X_t, y_t), X_t.shape[1]
@@ -683,18 +693,14 @@ def run_experiment_4():
         model.to(DEVICE)
         optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.0)
         loss_fn = nn.L1Loss()
-        try:
-            from opacus import PrivacyEngine
-            privacy_engine = PrivacyEngine()
-            model, optimizer, train_loader = privacy_engine.make_private(
-                module=model,
-                optimizer=optimizer,
-                data_loader=train_loader,
-                noise_multiplier=noise_multiplier,
-                max_grad_norm=max_grad_norm,
-            )
-        except ImportError:
-            raise RuntimeError("Opacus not installed. Install via: pip install opacus torch")
+        privacy_engine = PrivacyEngine()
+        model, optimizer, train_loader = privacy_engine.make_private(
+            module=model,
+            optimizer=optimizer,
+            data_loader=train_loader,
+            noise_multiplier=noise_multiplier,
+            max_grad_norm=max_grad_norm,
+        )
 
         model.train()
         for _ in range(epochs):
@@ -713,94 +719,142 @@ def run_experiment_4():
             yhat = model(X_t).cpu().numpy().reshape(-1)
         return np.clip(yhat, 0.0, 1.0)
 
-    # === Core loop over datasets and criteria (expects `datasets` to be defined in scope) ===
+    # === Core loop over datasets and criteria ===
     for ds_name, spec in datasets.items():
         print(f"\n=== DATASET: {ds_name} ===")
         path = spec["path"]
         criteria = spec["criteria"]
 
-        # results dicts: criterion (lowercase) -> (mae, csp)
-        results_linear: Dict[str, Tuple[float, float]] = {}
-        results_mlp:    Dict[str, Tuple[float, float]] = {}
+        # accumulators: criterion -> sums
+        sum_linear = defaultdict(lambda: np.array([0.0, 0.0], dtype=float))   # (MAE, CSP)
+        sum_mlp    = defaultdict(lambda: np.array([0.0, 0.0], dtype=float))   # (MAE, CSP)
+        sum_tvd    = defaultdict(float)                                       # ProxyMutualInformationTVD
+        sum_repair = defaultdict(float)                                       # ProxyRepairMaxSat
+        sum_tc     = defaultdict(float)                                       # TupleContribution
 
-        for criterion in criteria:
-            protected, response, admissible = criterion[0], criterion[1], criterion[2]
-            crit_label = f"{protected}->{response} | {admissible}".lower()
-            df = _encode_and_clean(path, criterion)
+        for rep in range(repetitions):
+            rep_seed = RANDOM_STATE + rep
 
-            # choose features: use encoded protected + admissible; target is encoded response
-            feat_cols = [protected] + ([admissible] if admissible else [])
-            X_full = df[feat_cols].to_numpy(dtype=float)
-            y_full = df[response].to_numpy(dtype=float)
+            for criterion in criteria:
+                protected, response, admissible = criterion[0], criterion[1], criterion[2]
+                crit_label = f"{protected}->{response} | {admissible}".lower()
 
-            # normalize y into [0,1] so MAE is well-behaved (in case label encoder created >2 classes)
-            if np.ptp(y_full) > 0:
-                y_full = (y_full - y_full.min()) / (np.ptp(y_full))
+                # encode and clean only needed columns (same as you use elsewhere)
+                df = _encode_and_clean(path, criterion)
 
-            # limit training size
-            n_total = len(df)
-            n_use = int(min(n_total, 300000))
-            if n_use < n_total:
-                df = df.sample(n=n_use, random_state=RANDOM_STATE)
+                # limit sample size to 100000
+                n_total = len(df)
+                n_use = int(min(n_total, SAMPLE_SIZE))
+                if n_use < n_total:
+                    df = df.sample(n=n_use, random_state=rep_seed)
+
+                # ======= PROXY MEASURES (epsilon = 1.0) =======
+                tvd_proxy = ProxyMutualInformationTVD(data=df)
+                sum_tvd[crit_label] += float(tvd_proxy.calculate([criterion], epsilon=EPSILON))
+
+                repair_proxy = ProxyRepairMaxSat(data=df)
+                sum_repair[crit_label] += float(repair_proxy.calculate([criterion], epsilon=EPSILON))
+
+                tc_proxy = TupleContribution(data=df)
+                sum_tc[crit_label] += float(tc_proxy.calculate([criterion], epsilon=EPSILON))
+
+                # ======= MODELS (Regression / Random Forest) =======
+                # features: protected + admissible, target: response (all already encoded)
+                feat_cols = [protected] + ([admissible] if admissible else [])
                 X_full = df[feat_cols].to_numpy(dtype=float)
                 y_full = df[response].to_numpy(dtype=float)
+
+                # normalize y to [0,1] for MAE
                 if np.ptp(y_full) > 0:
                     y_full = (y_full - y_full.min()) / (np.ptp(y_full))
 
-            # split
-            stratify = None
-            try:
-                y_round = np.round(y_full)
-                if len(np.unique(y_round)) <= 10:
-                    stratify = y_round
-            except Exception:
+                # split
                 stratify = None
+                try:
+                    y_round = np.round(y_full)
+                    if len(np.unique(y_round)) <= 10:
+                        stratify = y_round
+                except Exception:
+                    stratify = None
 
-            X_train, X_test, y_train, y_test = train_test_split(
-                X_full, y_full, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=stratify
-            )
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X_full, y_full, test_size=TEST_SIZE,
+                    random_state=rep_seed, stratify=stratify
+                )
 
-            # protected/admissible series for CSP on TEST split
-            prot_test = df[protected].iloc[X_test.shape[0] * 0:len(X_test)].reset_index(drop=True)  # placeholder
-            # Better: recompute masks from the same split indices
-            # build indices by a second split call with return of indices
-            idx_all = np.arange(len(X_full))
-            _, idx_test = train_test_split(
-                idx_all, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=stratify
-            )
-            prot_test = df[protected].iloc[idx_test].reset_index(drop=True)
-            if admissible:
-                adm_test = df[admissible].iloc[idx_test].reset_index(drop=True)
-            else:
-                # if no admissible, make a single-group placeholder (all zeros)
-                adm_test = pd.Series(np.zeros(len(idx_test), dtype=int))
+                # indices for fairness computation
+                idx_all = np.arange(len(X_full))
+                _, idx_test = train_test_split(
+                    idx_all, test_size=TEST_SIZE,
+                    random_state=rep_seed, stratify=stratify
+                )
+                prot_test = df[protected].iloc[idx_test].reset_index(drop=True)
+                if admissible:
+                    adm_test = df[admissible].iloc[idx_test].reset_index(drop=True)
+                else:
+                    adm_test = pd.Series(np.zeros(len(idx_test), dtype=int))
 
-            # to torch
-            train_ds, in_dim = _to_torch(X_train, y_train)
-            effective_batch = min(BATCH_SIZE, len(train_ds))
-            train_loader = DataLoader(train_ds, batch_size=effective_batch, shuffle=True, drop_last=False)
+                # to torch
+                train_ds, in_dim = _to_torch(X_train, y_train)
+                effective_batch = min(BATCH_SIZE, len(train_ds))
+                train_loader = DataLoader(train_ds, batch_size=effective_batch,
+                                          shuffle=True, drop_last=False)
 
-            # --- DPLinear ---
-            lin = DPLinear(in_dim)
-            _train_dp_sgd(lin, train_loader)
-            yhat_lin = _predict(lin, X_test)
-            mae_lin = float(np.mean(np.abs(yhat_lin - y_test)))
-            csp_lin = _conditional_statistical_parity(yhat_lin, prot_test, adm_test, threshold=POS_THRESHOLD)
-            results_linear[crit_label] = (mae_lin, csp_lin)
+                # --- Regression (DPLinear) ---
+                lin = DPLinear(in_dim)
+                _train_dp_sgd(lin, train_loader)
+                yhat_lin = _predict(lin, X_test)
+                mae_lin = float(np.mean(np.abs(yhat_lin - y_test)))
+                csp_lin = _conditional_statistical_parity(yhat_lin, prot_test, adm_test,
+                                                          threshold=POS_THRESHOLD)
+                sum_linear[crit_label] += np.array([mae_lin, csp_lin], dtype=float)
 
-            # --- DPMLP ---
-            mlp = DPMLP(in_dim)
-            _train_dp_sgd(mlp, train_loader)
-            yhat_mlp = _predict(mlp, X_test)
-            mae_mlp = float(np.mean(np.abs(yhat_mlp - y_test)))
-            csp_mlp = _conditional_statistical_parity(yhat_mlp, prot_test, adm_test, threshold=POS_THRESHOLD)
-            results_mlp[crit_label] = (mae_mlp, csp_mlp)
+                # --- Random Forest (DPMLP proxy) ---
+                mlp = DPMLP(in_dim)
+                _train_dp_sgd(mlp, train_loader)
+                yhat_mlp = _predict(mlp, X_test)
+                mae_mlp = float(np.mean(np.abs(yhat_mlp - y_test)))
+                csp_mlp = _conditional_statistical_parity(yhat_mlp, prot_test, adm_test,
+                                                          threshold=POS_THRESHOLD)
+                sum_mlp[crit_label] += np.array([mae_mlp, csp_mlp], dtype=float)
 
-        # Print dicts
-        print("DPLinear results (criterion -> (mae, csp)):")
-        print(results_linear)
-        print("DPMLP results (criterion -> (mae, csp)):")
-        print(results_mlp)
+        # ===== Averaging over repetitions and building the table =====
+        crits_sorted = sorted(sum_linear.keys())
+        rows = []
+        for crit in crits_sorted:
+            tvd_avg = sum_tvd[crit] / repetitions
+            repair_avg = sum_repair[crit] / repetitions
+            tc_avg = sum_tc[crit] / repetitions
+
+            mae_lin_avg = sum_linear[crit][0] / repetitions
+            csp_lin_avg = sum_linear[crit][1] / repetitions
+            mae_mlp_avg = sum_mlp[crit][0] / repetitions
+            csp_mlp_avg = sum_mlp[crit][1] / repetitions
+
+            rows.append([
+                round(tvd_avg, 4),
+                round(repair_avg, 4),
+                round(tc_avg, 4),
+                round(mae_lin_avg, 4),
+                round(csp_lin_avg, 4),
+                round(mae_mlp_avg, 4),
+                round(csp_mlp_avg, 4),
+            ])
+
+        # multi-level columns: three proxies + two models (Regression, Random Forest)
+        col_index = pd.MultiIndex.from_tuples([
+            (r"$\mathcal{U}^{TVD}_{MI}$", ""),
+            (r"$\mathcal{U}^{SAT}_{R}$", ""),
+            (r"$\mathcal{U}_{TC}$", ""),
+            ("Regression", "Accuracy"),
+            ("Regression", "Fairness"),
+            ("Random Forest", "Accuracy"),
+            ("Random Forest", "Fairness"),
+        ])
+
+        table = pd.DataFrame(rows, index=crits_sorted, columns=col_index)
+        print("\nTable of averaged measures and models (rounded to 4 decimals):")
+        print(table)
 
 
 

@@ -7,3 +7,4 @@ scikit-learn
 disjoint_set
 jax
 z3-solver
+torch
