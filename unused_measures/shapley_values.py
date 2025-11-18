@@ -425,7 +425,7 @@ class ShapleyValues:
         else:
             self.dataset = data
 
-    def calculate(self, s_col, o_col, a_col=None, threshold=0.01, sample_size=100, times=100, data=None):
+    def calculate(self, s_col, o_col, a_col=None, threshold=0.01, num_tuples=100, times=100, data=None):
         """
         Calculates Shapley-based unfairness score.
 
@@ -468,7 +468,7 @@ class ShapleyValues:
                 D_tag = copy.deepcopy(D)
                 D_tag.remove(t)
 
-                S = random.sample(population=D_tag, k=sample_size)
+                S = random.sample(population=D_tag, k=num_tuples)
                 tvd_S_and_t = ProxyMutualInformationTVD(data=pd.DataFrame(S + [t], columns=[
                     s_col, o_col, a_col])).calculate(s_col, o_col, a_col)
                 tvd_S = ProxyMutualInformationTVD(data=pd.DataFrame(S, columns=[
@@ -485,5 +485,5 @@ class ShapleyValues:
         end_time = time.time()  # Record end time
         elapsed_time = end_time - start_time
         print(f"Shapley: {num_tuples_with_shapley_above_threshold} tuples flagged above threshold {threshold} with "
-              f"sample size {sample_size} and num iterations {times}. Calculation took {elapsed_time:.3f} seconds.")
+              f"sample size {num_tuples} and num iterations {times}. Calculation took {elapsed_time:.3f} seconds.")
         return num_tuples_with_shapley_above_threshold

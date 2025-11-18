@@ -19,7 +19,7 @@ class MutualInformation:
     for differential privacy.
     """
 
-    def __init__(self, datapath=None, data=None):
+    def __init__(self, datapath=None, data=None, **kwargs):
         if (datapath is None and data is None) or (datapath is not None and data is not None):
             raise ValueError("Usage: Should pass either datapath or data itself")
         if datapath is not None:

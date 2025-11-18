@@ -10,6 +10,7 @@ from matplotlib import pyplot as plt
 from opacus import PrivacyEngine
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+from sympy import Line2D
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -322,6 +323,56 @@ def _encode_and_clean(data_path, cols):
     return df
 
 
+def plot_legend(save=True, outfile="plots/legend.png"):
+    """Creating a standalone legend figure for Experiment 1 with the four measures arranged in a single horizontal row,
+    and save it to `outfile`.
+    """
+    labels = [
+        "Mutual Information",
+        "Proxy Mutual Information TVD",
+        "Proxy RepairMaxSat",
+        "Tuple Contribution",
+    ]
+    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+
+    fig, ax = plt.subplots(figsize=(8, 1.6))
+
+    handles = []
+    for i, label in enumerate(labels):
+        from matplotlib.lines import Line2D as MplLine2D
+        line = MplLine2D(
+            [2, 3], [2, 2],
+            color=colors[i % len(colors)],
+            marker="o",
+            linestyle="-",
+            linewidth=2,
+            label=label,
+        )
+        ax.add_line(line)
+        handles.append(line)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.legend(
+        handles,
+        labels,
+        loc="center",
+        ncol=len(labels),
+        frameon=True,
+        fontsize=10,
+    )
+
+    if save:
+        import os
+        os.makedirs(os.path.dirname(outfile), exist_ok=True)
+        plt.savefig(outfile, dpi=180, bbox_inches="tight")
+        print(f"Saved {outfile}")
+    plt.show()
+
+
 def run_experiment_1(
     epsilon=None,
     repetitions=5,
@@ -331,7 +382,7 @@ def run_experiment_1(
 ):
     """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping criteria constant
     for every dataset and increasing the number of tuples."""
-    sample_sizes_per_dataset = {
+    num_tupless_per_dataset = {
         "Adult": [1000, 5000, 10000, 15000, 30000],
         "IPUMS-CPS": [5000, 10000, 50000, 100000, 300000],
         "Stackoverflow": [5000, 10000, 20000, 40000, 60000],
@@ -340,12 +391,11 @@ def run_experiment_1(
     }
 
     plt.rcParams.update({
-        "axes.titlesize": 20,
-        "axes.labelsize": 18,
-        "xtick.labelsize": 16,
-        "ytick.labelsize": 16,
-        "legend.fontsize": 10,
-        "figure.titlesize": 20,
+        "axes.titlesize": 26,
+        "axes.labelsize": 24,
+        "xtick.labelsize": 22,
+        "ytick.labelsize": 22,
+        "figure.titlesize": 26,
     })
 
     fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
@@ -360,22 +410,22 @@ def run_experiment_1(
         for criterion in criteria:
             cols_list += criterion
         data = _encode_and_clean(path, cols_list)
-        sample_sizes = sample_sizes_per_dataset[ds_name]
+        num_tupless = num_tupless_per_dataset[ds_name]
 
         results = {measure_name: [] for measure_name in measures.keys()}
         for measure_name, measure_cls in measures.items():
-            # if measure_name == "Proxy RepairMaxSat" and path in ["data/census.csv", "data/stackoverflow.csv"]:
-            #     results[measure_name] += [np.nan] * len(sample_sizes)
-            #     continue
+            if measure_name == "Proxy RepairMaxSat" and path in ["data/census.csv", "data/stackoverflow.csv"]:
+                results[measure_name] += [np.nan] * len(num_tupless)
+                continue
             flag_timeout = False
-            for sample_size in sample_sizes:
+            for num_tuples in num_tupless:
                 if flag_timeout:
-                    print("Skipping next iterations because got timeout for smaller sample size.")
+                    print("Skipping next iterations because got timeout for smaller number of tuples.")
                     results[measure_name].append(np.nan)
                     continue
-                results_for_sample_size = []
+                results_for_num_tuples = []
                 for _ in range(repetitions):
-                    n = min(sample_size, len(data))
+                    n = min(num_tuples, len(data))
                     sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
                     m = measure_cls(data=sample)
                     start_time = time.time()
@@ -384,33 +434,24 @@ def run_experiment_1(
                             _ = executor.submit(m.calculate, criteria, epsilon=epsilon).result(
                                 timeout=timeout_seconds)
                             elapsed_time = time.time() - start_time
-                            results_for_sample_size.append(elapsed_time)
+                            results_for_num_tuples.append(elapsed_time)
                         except TimeoutError:
                             print("Skipping the iteration due to timeout.")
-                            results_for_sample_size.append(np.nan)
+                            results_for_num_tuples.append(np.nan)
                             flag_timeout = True
                             break
-                results[measure_name].append(np.mean(results_for_sample_size))
+                results[measure_name].append(np.mean(results_for_num_tuples))
 
         for measure_name, runtimes in results.items():
-            ax.plot([str(sample_size // 1000) + "K" if sample_size % 1000 == 0 else str(sample_size) for sample_size in
-                     sample_sizes], runtimes, marker="o", linewidth=2, label=measure_name)
-
+            ax.plot([str(num_tuples // 1000) + "K" if num_tuples % 1000 == 0 else str(num_tuples) for num_tuples in
+                     num_tupless], runtimes, marker="o", linewidth=2, label=measure_name)
+        ax.set_xlabel("number of tuples")
         ax.set_yscale('log')
         ax.set_title(ds_name)
         ax.grid(True, linestyle="--", alpha=0.4)
 
-    seen = {}
-    for ax in np.ravel(axes):
-        handles, labels = ax.get_legend_handles_labels()
-        for h, lbl in zip(handles, labels):
-            if lbl and lbl not in seen:
-                seen[lbl] = h
-    axes[0].set_xlabel("sample size")
     axes[0].set_ylabel("runtime (s), log scale")
-    axes[len(axes) - 1].legend(list(seen.values()), list(seen.keys()), title="Measure", loc="center right",
-                               bbox_to_anchor=(0.98, 0.5), ncol=1)
-    fig.suptitle("Runtime as function of Sample Size", y=1.02)
+    fig.suptitle("Runtime as Function of Number of Tuples", y=1.02)
     fig.tight_layout()
 
     if save:
@@ -423,21 +464,20 @@ def run_experiment_1(
 
 def run_experiment_2(
     epsilon=None,
-    sample_size=100000,
+    num_tuples=100000,
     repetitions=5,
     save=True,
     outfile="plots/experiment2.png",
     seed=123
 ):
-    """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping sample size
+    """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping number of tuples
         constant and increasing the number of criteria in the set."""
     plt.rcParams.update({
-        "axes.titlesize": 20,
-        "axes.labelsize": 18,
-        "xtick.labelsize": 16,
-        "ytick.labelsize": 16,
-        "legend.fontsize": 10,
-        "figure.titlesize": 20,
+        "axes.titlesize": 26,
+        "axes.labelsize": 24,
+        "xtick.labelsize": 22,
+        "ytick.labelsize": 22,
+        "figure.titlesize": 26,
     })
 
     fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
@@ -457,24 +497,23 @@ def run_experiment_2(
         for measure_name, measure_cls in measures.items():
             flag_timeout = False
             for num_criteria in range(1, len(criteria) + 1):
-                # if measure_name == "Proxy RepairMaxSat" and (path == "data/census.csv" or
-                #                                              (path == "data/stackoverflow.csv" and num_criteria > 2)):
-                #     results[measure_name].append(np.nan)
-                #     continue
+                if measure_name == "Proxy RepairMaxSat" and (path == "data/census.csv" or
+                                                             (path == "data/stackoverflow.csv" and num_criteria > 2)):
+                    results[measure_name].append(np.nan)
+                    continue
                 results_for_num_criteria = []
                 if flag_timeout:
-                    print("Skipping next iterations because got timeout for smaller sample size.")
+                    print("Skipping next iterations because got timeout for smaller number of tuples.")
                     results[measure_name].append(np.nan)
                     continue
                 for _ in range(repetitions):
-                    n = min(sample_size, len(data))
+                    n = min(num_tuples, len(data))
                     sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
                     m = measure_cls(data=sample)
                     start_time = time.time()
                     with ThreadPoolExecutor() as executor:
                         try:
-                            _ = executor.submit(m.calculate, criteria[:num_criteria], epsilon=epsilon).result(
-                                timeout=timeout_seconds)
+                            _ = executor.submit(m.calculate, criteria[:num_criteria], epsilon=epsilon).result(timeout=timeout_seconds)
                             elapsed_time = time.time() - start_time
                             results_for_num_criteria.append(elapsed_time)
                         except TimeoutError:
@@ -488,22 +527,13 @@ def run_experiment_2(
         for measure_name, runtimes in results.items():
             ax.plot([str(int(num_criteria)) for num_criteria in range(1, len(criteria) + 1)], runtimes, marker="o",
                     linewidth=2, label=measure_name)
-
+        ax.set_xlabel("number of criteria")
         ax.set_yscale('log')
         ax.set_title(ds_name)
         ax.grid(True, linestyle="--", alpha=0.4)
 
-    seen = {}
-    for ax in np.ravel(axes):
-        handles, labels = ax.get_legend_handles_labels()
-        for h, lbl in zip(handles, labels):
-            if lbl and lbl not in seen:
-                seen[lbl] = h
-    axes[0].set_xlabel("number of criteria")
     axes[0].set_ylabel("runtime (s), log scale")
-    axes[-1].legend(list(seen.values()), list(seen.keys()), title="Measure", loc="center right",
-                   bbox_to_anchor=(0.98, 0.5), ncol=1)
-    fig.suptitle(f"Runtime as function of Number of Criteria, sample size at most {round(sample_size / 1000)}K", y=1.02)
+    fig.suptitle(f"Runtime as Function of Number of Criteria, number of tuples at most {round(num_tuples / 1000)}K", y=1.02)
     fig.tight_layout()
 
     if save:
@@ -516,7 +546,7 @@ def run_experiment_2(
 
 def run_experiment_3(
     epsilons=(0.1, 1, 5, 10),
-    sample_size=100000,
+    num_tuples=100000,
     repetitions=5,
     save=True,
     outfile="plots/experiment3.png",
@@ -525,17 +555,18 @@ def run_experiment_3(
     """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping criteria and the
         number of tuples constant for every dataset and increasing the privacy budget epsilon."""
 
-    def _rel_error(x, y, tiny=1e-12):
+    def _rel_error(x, y, tiny=1e-20):
         denom = max(abs(y), tiny)  # ensure we do not divide by 0
-        return abs(x - y) / denom
+        error = abs(x - y) / denom
+        print(f"Error: {error}")
+        return error
 
     plt.rcParams.update({
-        "axes.titlesize": 20,
-        "axes.labelsize": 18,
-        "xtick.labelsize": 16,
-        "ytick.labelsize": 16,
-        "legend.fontsize": 10,
-        "figure.titlesize": 20,
+        "axes.titlesize": 26,
+        "axes.labelsize": 24,
+        "xtick.labelsize": 22,
+        "ytick.labelsize": 22,
+        "figure.titlesize": 26,
     })
 
     fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
@@ -550,15 +581,15 @@ def run_experiment_3(
         for criterion in criteria:
             cols_list += criterion
         data = _encode_and_clean(path, cols_list)
-        n = min(sample_size, len(data))
+        n = min(num_tuples, len(data))
         sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
 
         results = {measure_name: [] for measure_name in measures.keys()}
         for measure_name, measure_cls in measures.items():
             m = measure_cls(data=sample)
-            # if measure_name == "Proxy RepairMaxSat" and path in ["data/census.csv", "data/stackoverflow.csv"]:
-            #     results[measure_name] += [np.nan] * len(epsilons)
-            #     continue
+            if measure_name == "Proxy RepairMaxSat" and path in ["data/census.csv", "data/stackoverflow.csv"]:
+                results[measure_name] += [np.nan] * len(epsilons)
+                continue
             with ThreadPoolExecutor() as executor:
                 try:
                     non_private_result = executor.submit(m.calculate, criteria, epsilon=None).result(
@@ -584,21 +615,13 @@ def run_experiment_3(
 
         for measure_name, losses in results.items():
             ax.plot(epsilons, losses, marker="o", linewidth=2, label=measure_name)
-
+        ax.set_xlabel("privacy budget ε")
+        ax.set_yscale('log')
         ax.set_title(ds_name)
         ax.grid(True, linestyle="--", alpha=0.4)
-
-    seen = {}
-    for ax in np.ravel(axes):
-        handles, labels = ax.get_legend_handles_labels()
-        for h, lbl in zip(handles, labels):
-            if lbl and lbl not in seen:
-                seen[lbl] = h
-    axes[0].set_xlabel("privacy budget ε")
-    axes[0].set_ylabel("relative L1 error")
-    axes[-1].legend(list(seen.values()), list(seen.keys()), title="Measure", loc="center right",
-                   bbox_to_anchor=(0.98, 0.5), ncol=1)
-    fig.suptitle(f"Relative L1 Error as function of Privacy Budget, sample size at most {round(sample_size / 1000)}K",
+        
+    axes[0].set_ylabel("relative L1 error, log scale")
+    fig.suptitle(f"Relative L1 Error as Function of Privacy Budget, number of tuples at most {round(num_tuples / 1000)}K",
                  y=1.02)
     fig.tight_layout()
 
@@ -612,7 +635,7 @@ def run_experiment_3(
 
 def run_experiment_4(
         epsilon: float = 1.0,
-        sample_size: int = 100000,
+        num_tuples: int = 30000,
         repetitions: int = 5,
         outfile="plots/experiment4.xlsx",
         seed=123
@@ -745,9 +768,9 @@ def run_experiment_4(
                 # encode and clean only needed columns
                 df = _encode_and_clean(path, criterion)
 
-                # limit sample size
+                # limit number of tuples
                 n_total = len(df)
-                n_use = int(min(n_total, sample_size))
+                n_use = int(min(n_total, num_tuples))
                 if n_use < n_total:
                     df = df.sample(n=n_use, random_state=rep_seed)
 
@@ -877,7 +900,8 @@ def run_experiment_4(
 if __name__ == "__main__":
     # create_plot_1()
     # create_plot_2()
-    # run_experiment_1()
-    # run_experiment_2()
-    # run_experiment_3()
+    plot_legend()
+    run_experiment_1()
+    run_experiment_2()
+    run_experiment_3()
     run_experiment_4()
