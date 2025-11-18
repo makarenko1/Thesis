@@ -611,9 +611,11 @@ def run_experiment_3(
 
 
 def run_experiment_4(
-        epsilon=1,
-        sample_size=100000,
-        repetitions=5
+        epsilon: float = 1.0,
+        sample_size: int = 100000,
+        repetitions: int = 5,
+        outfile="plots/experiment4.xlsx",
+        seed=123
 ):
     # ==== DP-SGD / training params ====
     DP_NOISE_MULT = 1.0        # Gaussian noise multiplier
@@ -625,9 +627,6 @@ def run_experiment_4(
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
     TEST_SIZE = 0.3
-    RANDOM_STATE = 42
-    SAMPLE_SIZE = 100000       # requested sample size
-    EPSILON = 1.0              # requested epsilon for proxies
 
     # ==== Models ====
     class DPLinear(nn.Module):
@@ -719,6 +718,10 @@ def run_experiment_4(
             yhat = model(X_t).cpu().numpy().reshape(-1)
         return np.clip(yhat, 0.0, 1.0)
 
+    # ===== Global rows for ALL datasets =====
+    all_rows = []
+    all_index = []   # list of (dataset_name, criterion_label) tuples
+
     # === Core loop over datasets and criteria ===
     for ds_name, spec in datasets.items():
         print(f"\n=== DATASET: {ds_name} ===")
@@ -733,38 +736,37 @@ def run_experiment_4(
         sum_tc     = defaultdict(float)                                       # TupleContribution
 
         for rep in range(repetitions):
-            rep_seed = RANDOM_STATE + rep
+            rep_seed = seed + rep
 
             for criterion in criteria:
                 protected, response, admissible = criterion[0], criterion[1], criterion[2]
                 crit_label = f"{protected}->{response} | {admissible}".lower()
 
-                # encode and clean only needed columns (same as you use elsewhere)
+                # encode and clean only needed columns
                 df = _encode_and_clean(path, criterion)
 
-                # limit sample size to 100000
+                # limit sample size
                 n_total = len(df)
-                n_use = int(min(n_total, SAMPLE_SIZE))
+                n_use = int(min(n_total, sample_size))
                 if n_use < n_total:
                     df = df.sample(n=n_use, random_state=rep_seed)
 
-                # ======= PROXY MEASURES (epsilon = 1.0) =======
+                # ======= PROXY MEASURES =======
                 tvd_proxy = ProxyMutualInformationTVD(data=df)
-                sum_tvd[crit_label] += float(tvd_proxy.calculate([criterion], epsilon=EPSILON))
+                sum_tvd[crit_label] += float(tvd_proxy.calculate([criterion], epsilon=epsilon))
 
                 repair_proxy = ProxyRepairMaxSat(data=df)
-                sum_repair[crit_label] += float(repair_proxy.calculate([criterion], epsilon=EPSILON))
+                sum_repair[crit_label] += float(repair_proxy.calculate([criterion], epsilon=epsilon))
 
                 tc_proxy = TupleContribution(data=df)
-                sum_tc[crit_label] += float(tc_proxy.calculate([criterion], epsilon=EPSILON))
+                sum_tc[crit_label] += float(tc_proxy.calculate([criterion], epsilon=epsilon))
 
                 # ======= MODELS (Regression / Random Forest) =======
-                # features: protected + admissible, target: response (all already encoded)
                 feat_cols = [protected] + ([admissible] if admissible else [])
                 X_full = df[feat_cols].to_numpy(dtype=float)
                 y_full = df[response].to_numpy(dtype=float)
 
-                # normalize y to [0,1] for MAE
+                # normalize y to [0,1]
                 if np.ptp(y_full) > 0:
                     y_full = (y_full - y_full.min()) / (np.ptp(y_full))
 
@@ -818,9 +820,8 @@ def run_experiment_4(
                                                           threshold=POS_THRESHOLD)
                 sum_mlp[crit_label] += np.array([mae_mlp, csp_mlp], dtype=float)
 
-        # ===== Averaging over repetitions and building the table =====
+        # ===== Averaging over repetitions; append to global table =====
         crits_sorted = sorted(sum_linear.keys())
-        rows = []
         for crit in crits_sorted:
             tvd_avg = sum_tvd[crit] / repetitions
             repair_avg = sum_repair[crit] / repetitions
@@ -831,7 +832,7 @@ def run_experiment_4(
             mae_mlp_avg = sum_mlp[crit][0] / repetitions
             csp_mlp_avg = sum_mlp[crit][1] / repetitions
 
-            rows.append([
+            all_rows.append([
                 round(tvd_avg, 4),
                 round(repair_avg, 4),
                 round(tc_avg, 4),
@@ -840,21 +841,36 @@ def run_experiment_4(
                 round(mae_mlp_avg, 4),
                 round(csp_mlp_avg, 4),
             ])
+            all_index.append((ds_name, crit))
 
-        # multi-level columns: three proxies + two models (Regression, Random Forest)
-        col_index = pd.MultiIndex.from_tuples([
-            (r"$\mathcal{U}^{TVD}_{MI}$", ""),
-            (r"$\mathcal{U}^{SAT}_{R}$", ""),
-            (r"$\mathcal{U}_{TC}$", ""),
-            ("Regression", "Accuracy"),
-            ("Regression", "Fairness"),
-            ("Random Forest", "Accuracy"),
-            ("Random Forest", "Fairness"),
-        ])
+    # ===== Build one big table with row MultiIndex (Dataset, Criterion) =====
+    row_index = pd.MultiIndex.from_tuples(all_index, names=["Dataset", "Criterion"])
+    col_index = pd.MultiIndex.from_tuples([
+        (r"$\mathcal{U}^{TVD}_{MI}$", ""),
+        (r"$\mathcal{U}^{SAT}_{R}$", ""),
+        (r"$\mathcal{U}_{TC}$", ""),
+        ("Regression", "Accuracy"),
+        ("Regression", "Fairness"),
+        ("Random Forest", "Accuracy"),
+        ("Random Forest", "Fairness"),
+    ])
 
-        table = pd.DataFrame(rows, index=crits_sorted, columns=col_index)
-        print("\nTable of averaged measures and models (rounded to 4 decimals):")
-        print(table)
+    table_all = pd.DataFrame(all_rows, index=row_index, columns=col_index)
+
+    # print without truncation
+    with pd.option_context(
+        "display.max_rows", None,
+        "display.max_columns", None,
+        "display.width", 200,
+        "display.max_colwidth", None,
+    ):
+        print("\n=== Combined table for all datasets (averaged, rounded to 4 decimals) ===")
+        print(table_all)
+
+    # save to Excel
+    table_all.to_excel(outfile, merge_cells=True)
+    print(f"\nSaved combined table to {outfile}")
+
 
 
 
