@@ -391,11 +391,11 @@ def run_experiment_1(
     }
 
     plt.rcParams.update({
-        "axes.titlesize": 26,
-        "axes.labelsize": 24,
-        "xtick.labelsize": 22,
-        "ytick.labelsize": 22,
-        "figure.titlesize": 26,
+        "axes.titlesize": 28,
+        "axes.labelsize": 26,
+        "xtick.labelsize": 24,
+        "ytick.labelsize": 24,
+        "figure.titlesize": 28,
     })
 
     fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
@@ -473,11 +473,11 @@ def run_experiment_2(
     """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping number of tuples
         constant and increasing the number of criteria in the set."""
     plt.rcParams.update({
-        "axes.titlesize": 26,
-        "axes.labelsize": 24,
-        "xtick.labelsize": 22,
-        "ytick.labelsize": 22,
-        "figure.titlesize": 26,
+        "axes.titlesize": 28,
+        "axes.labelsize": 26,
+        "xtick.labelsize": 24,
+        "ytick.labelsize": 24,
+        "figure.titlesize": 28,
     })
 
     fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
@@ -560,11 +560,11 @@ def run_experiment_3(
         return abs(x - y) / denom
 
     plt.rcParams.update({
-        "axes.titlesize": 26,
-        "axes.labelsize": 24,
-        "xtick.labelsize": 22,
-        "ytick.labelsize": 22,
-        "figure.titlesize": 26,
+        "axes.titlesize": 28,
+        "axes.labelsize": 26,
+        "xtick.labelsize": 24,
+        "ytick.labelsize": 24,
+        "figure.titlesize": 28,
     })
 
     fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
@@ -899,7 +899,7 @@ if __name__ == "__main__":
     # create_plot_1()
     # create_plot_2()
     # plot_legend()
-    # run_experiment_1()
-    # run_experiment_2()
+    run_experiment_1()
+    run_experiment_2()
     run_experiment_3()
-    # run_experiment_4()
+    run_experiment_4()
