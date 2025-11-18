@@ -557,9 +557,7 @@ def run_experiment_3(
 
     def _rel_error(x, y, tiny=1e-20):
         denom = max(abs(y), tiny)  # ensure we do not divide by 0
-        error = abs(x - y) / denom
-        print(f"Error: {error}")
-        return error
+        return abs(x - y) / denom
 
     plt.rcParams.update({
         "axes.titlesize": 26,
@@ -900,8 +898,8 @@ def run_experiment_4(
 if __name__ == "__main__":
     # create_plot_1()
     # create_plot_2()
-    plot_legend()
-    run_experiment_1()
-    run_experiment_2()
+    # plot_legend()
+    # run_experiment_1()
+    # run_experiment_2()
     run_experiment_3()
-    run_experiment_4()
+    # run_experiment_4()
