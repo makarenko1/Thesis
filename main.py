@@ -307,7 +307,6 @@ datasets = {
 }
 
 measures = {
-    "Mutual Information": MutualInformation,
     "Proxy Mutual Information TVD": ProxyMutualInformationTVD,
     "Proxy RepairMaxSat": ProxyRepairMaxSat,
     "Tuple Contribution": TupleContribution,
@@ -327,18 +326,10 @@ def plot_legend(save=True, outfile="plots/legend.png"):
     """Creating a standalone legend figure for Experiment 1 with the four measures arranged in a single horizontal row,
     and save it to `outfile`.
     """
-    labels = [
-        "Mutual Information",
-        "Proxy Mutual Information TVD",
-        "Proxy RepairMaxSat",
-        "Tuple Contribution",
-    ]
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-
     fig, ax = plt.subplots(figsize=(8, 1.6))
-
     handles = []
-    for i, label in enumerate(labels):
+    for i, label in enumerate(measures.keys()):
         from matplotlib.lines import Line2D as MplLine2D
         line = MplLine2D(
             [2, 3], [2, 2],
@@ -358,9 +349,9 @@ def plot_legend(save=True, outfile="plots/legend.png"):
         spine.set_visible(False)
     ax.legend(
         handles,
-        labels,
+        measures.keys(),
         loc="center",
-        ncol=len(labels),
+        ncol=len(measures.keys()),
         frameon=True,
         fontsize=10,
     )
@@ -376,33 +367,31 @@ def plot_legend(save=True, outfile="plots/legend.png"):
 def run_experiment_1(
     epsilon=None,
     repetitions=5,
-    save=True,
-    outfile="plots/experiment1.png",
-    seed=123
+    outfile="plots/experiment1.png"
 ):
     """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping criteria constant
     for every dataset and increasing the number of tuples."""
     num_tupless_per_dataset = {
         "Adult": [1000, 5000, 10000, 15000, 30000],
-        "IPUMS-CPS": [5000, 10000, 50000, 100000, 300000],
+        "IPUMS-CPS": [5000, 10000, 50000, 100000, 300000, 600000, 1000000],
         "Stackoverflow": [5000, 10000, 20000, 40000, 60000],
         "Compas": [1000, 1500, 3000, 7000, 10000],
         "Healthcare": [100, 200, 400, 700, 1000],
     }
 
     plt.rcParams.update({
-        "axes.titlesize": 28,
-        "axes.labelsize": 26,
+        "axes.titlesize": 34,
+        "axes.labelsize": 30,
         "xtick.labelsize": 24,
         "ytick.labelsize": 24,
-        "figure.titlesize": 28,
+        "figure.titlesize": 34,
     })
 
     fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
     if not isinstance(axes, np.ndarray):
         axes = np.array([axes])
 
-    rng = np.random.RandomState(seed)
+    rng = np.random.RandomState()
     for ax, (ds_name, spec) in zip(axes, datasets.items()):
         path = spec["path"]
         criteria = spec["criteria"]
@@ -412,18 +401,31 @@ def run_experiment_1(
         data = _encode_and_clean(path, cols_list)
         num_tupless = num_tupless_per_dataset[ds_name]
 
-        results = {measure_name: [] for measure_name in measures.keys()}
+        # store mean / min / max per measure
+        results = {
+            measure_name: {"mean": [], "min": [], "max": []}
+            for measure_name in measures.keys()
+        }
+
         for measure_name, measure_cls in measures.items():
             if measure_name == "Proxy RepairMaxSat" and path in ["data/census.csv", "data/stackoverflow.csv"]:
-                results[measure_name] += [np.nan] * len(num_tupless)
+                # no data -> all NaNs
+                for _ in num_tupless:
+                    results[measure_name]["mean"].append(np.nan)
+                    results[measure_name]["min"].append(np.nan)
+                    results[measure_name]["max"].append(np.nan)
                 continue
+
             flag_timeout = False
             for num_tuples in num_tupless:
                 if flag_timeout:
                     print("Skipping next iterations because got timeout for smaller number of tuples.")
-                    results[measure_name].append(np.nan)
+                    results[measure_name]["mean"].append(np.nan)
+                    results[measure_name]["min"].append(np.nan)
+                    results[measure_name]["max"].append(np.nan)
                     continue
-                results_for_num_tuples = []
+
+                runtimes_rep = []
                 for _ in range(repetitions):
                     n = min(num_tuples, len(data))
                     sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
@@ -434,17 +436,55 @@ def run_experiment_1(
                             _ = executor.submit(m.calculate, criteria, epsilon=epsilon).result(
                                 timeout=timeout_seconds)
                             elapsed_time = time.time() - start_time
-                            results_for_num_tuples.append(elapsed_time)
+                            runtimes_rep.append(elapsed_time)
                         except TimeoutError:
                             print("Skipping the iteration due to timeout.")
-                            results_for_num_tuples.append(np.nan)
+                            runtimes_rep.append(np.nan)
                             flag_timeout = True
                             break
-                results[measure_name].append(np.mean(results_for_num_tuples))
 
-        for measure_name, runtimes in results.items():
-            ax.plot([str(num_tuples // 1000) + "K" if num_tuples % 1000 == 0 else str(num_tuples) for num_tuples in
-                     num_tupless], runtimes, marker="o", linewidth=2, label=measure_name)
+                vals = np.array(runtimes_rep, dtype=float)
+                vals = vals[~np.isnan(vals)]
+                if vals.size == 0:
+                    mean_v = min_v = max_v = np.nan
+                else:
+                    mean_v = vals.mean()
+                    min_v = vals.min()
+                    max_v = vals.max()
+
+                results[measure_name]["mean"].append(mean_v)
+                results[measure_name]["min"].append(min_v)
+                results[measure_name]["max"].append(max_v)
+
+        # numeric x for plotting + nice tick labels
+        xs = np.arange(len(num_tupless))
+        tick_labels = [
+            f"{num_tuples // 1000}K" if num_tuples % 1000 == 0 else str(num_tuples)
+            for num_tuples in num_tupless
+        ]
+        ax.set_xticks(xs)
+        ax.set_xticklabels(tick_labels)
+
+        for measure_name, stats in results.items():
+            means = np.array(stats["mean"])
+            lows  = np.array(stats["min"])
+            highs = np.array(stats["max"])
+
+            # plot main line
+            line, = ax.plot(xs, means, marker="o", linewidth=2, label=measure_name)
+
+            # shadow band = min/max across repetitions
+            mask = ~np.isnan(means) & ~np.isnan(lows) & ~np.isnan(highs)
+            if mask.any():
+                ax.fill_between(
+                    xs[mask],
+                    lows[mask],
+                    highs[mask],
+                    alpha=0.2,
+                    color=line.get_color(),
+                    linewidth=0,
+                )
+
         ax.set_xlabel("number of tuples")
         ax.set_yscale('log')
         ax.set_title(ds_name)
@@ -454,11 +494,10 @@ def run_experiment_1(
     fig.suptitle("Runtime as Function of Number of Tuples", y=1.02)
     fig.tight_layout()
 
-    if save:
-        import os
-        os.makedirs(os.path.dirname(outfile), exist_ok=True)
-        plt.savefig(outfile, dpi=180, bbox_inches="tight")
-        print(f"Saved {outfile}")
+    import os
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
+    plt.savefig(outfile, dpi=256, bbox_inches="tight")
+    print(f"Saved {outfile}")
     plt.show()
 
 
@@ -466,25 +505,23 @@ def run_experiment_2(
     epsilon=None,
     num_tuples=100000,
     repetitions=5,
-    save=True,
-    outfile="plots/experiment2.png",
-    seed=123
+    outfile="plots/experiment2.png"
 ):
-    """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping number of tuples
-        constant and increasing the number of criteria in the set."""
+    """Plot average runtimes over `repetitions` per measure and dataset
+    while keeping #tuples constant and increasing the number of criteria."""
     plt.rcParams.update({
-        "axes.titlesize": 28,
-        "axes.labelsize": 26,
+        "axes.titlesize": 34,
+        "axes.labelsize": 30,
         "xtick.labelsize": 24,
         "ytick.labelsize": 24,
-        "figure.titlesize": 28,
+        "figure.titlesize": 34,
     })
 
     fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
     if not isinstance(axes, np.ndarray):
         axes = np.array([axes])
 
-    rng = np.random.RandomState(seed)
+    rng = np.random.RandomState()
     for ax, (ds_name, spec) in zip(axes, datasets.items()):
         path = spec["path"]
         criteria = spec["criteria"]
@@ -493,54 +530,107 @@ def run_experiment_2(
             cols_list += criterion
         data = _encode_and_clean(path, cols_list)
 
-        results = {measure_name: [] for measure_name in measures.keys()}
+        # store mean / min / max per measure
+        results = {
+            measure_name: {"mean": [], "min": [], "max": []}
+            for measure_name in measures.keys()
+        }
+
         for measure_name, measure_cls in measures.items():
             flag_timeout = False
             for num_criteria in range(1, len(criteria) + 1):
-                if measure_name == "Proxy RepairMaxSat" and (path == "data/census.csv" or
-                                                             (path == "data/stackoverflow.csv" and num_criteria > 2)):
-                    results[measure_name].append(np.nan)
+                # cases we skip entirely
+                if (measure_name == "Proxy RepairMaxSat" and
+                        (path == "data/census.csv" or
+                         (path == "data/stackoverflow.csv" and num_criteria > 2))):
+                    results[measure_name]["mean"].append(np.nan)
+                    results[measure_name]["min"].append(np.nan)
+                    results[measure_name]["max"].append(np.nan)
                     continue
-                results_for_num_criteria = []
+
                 if flag_timeout:
-                    print("Skipping next iterations because got timeout for smaller number of tuples.")
-                    results[measure_name].append(np.nan)
+                    print("Skipping next iterations because got timeout for smaller number of criteria.")
+                    results[measure_name]["mean"].append(np.nan)
+                    results[measure_name]["min"].append(np.nan)
+                    results[measure_name]["max"].append(np.nan)
                     continue
+
+                runtimes_rep = []
                 for _ in range(repetitions):
                     n = min(num_tuples, len(data))
-                    sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
+                    sample = data.sample(n=n, replace=False,
+                                         random_state=rng.randint(0, 1_000_000))
                     m = measure_cls(data=sample)
                     start_time = time.time()
                     with ThreadPoolExecutor() as executor:
                         try:
-                            _ = executor.submit(m.calculate, criteria[:num_criteria], epsilon=epsilon).result(timeout=timeout_seconds)
+                            _ = executor.submit(
+                                m.calculate,
+                                criteria[:num_criteria],
+                                epsilon=epsilon
+                            ).result(timeout=timeout_seconds)
                             elapsed_time = time.time() - start_time
-                            results_for_num_criteria.append(elapsed_time)
+                            runtimes_rep.append(elapsed_time)
                         except TimeoutError:
                             print("Skipping the iteration due to timeout.")
-                            results_for_num_criteria.append(np.nan)
+                            runtimes_rep.append(np.nan)
                             flag_timeout = True
                             break
-                results[measure_name].append(np.nan if np.any(np.isnan(results_for_num_criteria)) else
-                                             np.mean(results_for_num_criteria))
 
-        for measure_name, runtimes in results.items():
-            ax.plot([str(int(num_criteria)) for num_criteria in range(1, len(criteria) + 1)], runtimes, marker="o",
-                    linewidth=2, label=measure_name)
+                vals = np.array(runtimes_rep, dtype=float)
+                vals = vals[~np.isnan(vals)]
+                if vals.size == 0:
+                    mean_v = min_v = max_v = np.nan
+                else:
+                    mean_v = vals.mean()
+                    min_v = vals.min()
+                    max_v = vals.max()
+
+                results[measure_name]["mean"].append(mean_v)
+                results[measure_name]["min"].append(min_v)
+                results[measure_name]["max"].append(max_v)
+
+        # numeric x for plotting + nice tick labels
+        xs = np.arange(1, len(criteria) + 1)
+        ax.set_xticks(xs)
+        ax.set_xticklabels([str(int(k)) for k in xs])
+
+        for measure_name, stats in results.items():
+            means = np.array(stats["mean"])
+            lows  = np.array(stats["min"])
+            highs = np.array(stats["max"])
+
+            # main line
+            line, = ax.plot(xs, means, marker="o", linewidth=2, label=measure_name)
+
+            # shadow band between min and max
+            mask = ~np.isnan(means) & ~np.isnan(lows) & ~np.isnan(highs)
+            if mask.any():
+                ax.fill_between(
+                    xs[mask],
+                    lows[mask],
+                    highs[mask],
+                    alpha=0.2,
+                    color=line.get_color(),
+                    linewidth=0,
+                )
+
         ax.set_xlabel("number of criteria")
         ax.set_yscale('log')
         ax.set_title(ds_name)
         ax.grid(True, linestyle="--", alpha=0.4)
 
     axes[0].set_ylabel("runtime (s), log scale")
-    fig.suptitle(f"Runtime as Function of Number of Criteria, number of tuples at most {round(num_tuples / 1000)}K", y=1.02)
+    fig.suptitle(
+        f"Runtime as Function of Number of Criteria, number of tuples at most {round(num_tuples / 1000)}K",
+        y=1.02
+    )
     fig.tight_layout()
 
-    if save:
-        import os
-        os.makedirs(os.path.dirname(outfile), exist_ok=True)
-        plt.savefig(outfile, dpi=180, bbox_inches="tight")
-        print(f"Saved {outfile}")
+    import os
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
+    plt.savefig(outfile, dpi=256, bbox_inches="tight")
+    print(f"Saved {outfile}")
     plt.show()
 
 
@@ -548,30 +638,28 @@ def run_experiment_3(
     epsilons=(0.1, 1, 5, 10),
     num_tuples=100000,
     repetitions=5,
-    save=True,
-    outfile="plots/experiment3.png",
-    seed=123
+    outfile="plots/experiment3.png"
 ):
-    """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping criteria and the
-        number of tuples constant for every dataset and increasing the privacy budget epsilon."""
+    """Plot relative L1 error vs epsilon, averaging over `repetitions`
+    and showing min/max bands as shadows around each line."""
 
-    def _rel_error(x, y, tiny=1e-20):
+    def _rel_error(x, y, tiny=1e-100):
         denom = max(abs(y), tiny)  # ensure we do not divide by 0
         return abs(x - y) / denom
 
     plt.rcParams.update({
-        "axes.titlesize": 28,
-        "axes.labelsize": 26,
+        "axes.titlesize": 34,
+        "axes.labelsize": 30,
         "xtick.labelsize": 24,
         "ytick.labelsize": 24,
-        "figure.titlesize": 28,
+        "figure.titlesize": 34,
     })
 
     fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
     if not isinstance(axes, np.ndarray):
         axes = np.array([axes])
 
-    rng = np.random.RandomState(seed)
+    rng = np.random.RandomState()
     for ax, (ds_name, spec) in zip(axes, datasets.items()):
         path = spec["path"]
         criteria = spec["criteria"]
@@ -580,63 +668,115 @@ def run_experiment_3(
             cols_list += criterion
         data = _encode_and_clean(path, cols_list)
         n = min(num_tuples, len(data))
-        sample = data.sample(n=n, replace=False, random_state=rng.randint(0, 1_000_000))
+        sample = data.sample(n=n, replace=False,
+                             random_state=rng.randint(0, 1_000_000))
 
-        results = {measure_name: [] for measure_name in measures.keys()}
+        # store mean / min / max per measure
+        results = {
+            measure_name: {"mean": [], "min": [], "max": []}
+            for measure_name in measures.keys()
+        }
+
         for measure_name, measure_cls in measures.items():
             m = measure_cls(data=sample)
+
+            # skip RepairMaxSat on huge datasets (as before)
             if measure_name == "Proxy RepairMaxSat" and path in ["data/census.csv", "data/stackoverflow.csv"]:
-                results[measure_name] += [np.nan] * len(epsilons)
+                for _ in epsilons:
+                    results[measure_name]["mean"].append(np.nan)
+                    results[measure_name]["min"].append(np.nan)
+                    results[measure_name]["max"].append(np.nan)
                 continue
+
+            # non-private baseline
             with ThreadPoolExecutor() as executor:
                 try:
-                    non_private_result = executor.submit(m.calculate, criteria, epsilon=None).result(
-                        timeout=timeout_seconds)
+                    non_private_result = executor.submit(
+                        m.calculate, criteria, epsilon=None
+                    ).result(timeout=timeout_seconds)
                 except TimeoutError:
-                    print("Skipping the iteration due to timeout.")
-                    results[measure_name] += [np.nan] * len(epsilons)
+                    print("Skipping the measure due to baseline timeout.")
+                    for _ in epsilons:
+                        results[measure_name]["mean"].append(np.nan)
+                        results[measure_name]["min"].append(np.nan)
+                        results[measure_name]["max"].append(np.nan)
                     continue
-            for epsilon in epsilons:
-                results_for_epsilon = []
+
+            # DP runs for each epsilon
+            for eps in epsilons:
+                errs = []
                 for _ in range(repetitions):
                     with ThreadPoolExecutor() as executor:
                         try:
-                            private_result = executor.submit(m.calculate, criteria, epsilon=epsilon).result(
-                                timeout=timeout_seconds)
-                            results_for_epsilon.append(_rel_error(private_result, non_private_result))
+                            private_result = executor.submit(
+                                m.calculate, criteria, epsilon=eps
+                            ).result(timeout=timeout_seconds)
+                            errs.append(_rel_error(private_result, non_private_result))
                         except TimeoutError:
-                            print("Skipping the iteration due to timeout.")
-                            results_for_epsilon.append(np.nan)
+                            print("Skipping this epsilon due to timeout.")
+                            errs.append(np.nan)
                             break
-                results[measure_name].append(np.nan if np.any(np.isnan(results_for_epsilon)) else
-                                             np.mean(results_for_epsilon))
 
-        for measure_name, losses in results.items():
-            ax.plot(epsilons, losses, marker="o", linewidth=2, label=measure_name)
+                vals = np.array(errs, dtype=float)
+                vals = vals[~np.isnan(vals)]
+                if vals.size == 0:
+                    mean_v = min_v = max_v = np.nan
+                else:
+                    mean_v = vals.mean()
+                    min_v = vals.min()
+                    max_v = vals.max()
+
+                results[measure_name]["mean"].append(mean_v)
+                results[measure_name]["min"].append(min_v)
+                results[measure_name]["max"].append(max_v)
+
+        # plotting with shadow bands
+        x = np.array(epsilons, dtype=float)
+        for measure_name, stats in results.items():
+            means = np.array(stats["mean"])
+            lows  = np.array(stats["min"])
+            highs = np.array(stats["max"])
+
+            # line for the mean
+            line, = ax.plot(x, means, marker="o", linewidth=2, label=measure_name)
+
+            # shadow band between min and max
+            mask = ~np.isnan(means) & ~np.isnan(lows) & ~np.isnan(highs)
+            if mask.any():
+                ax.fill_between(
+                    x[mask],
+                    lows[mask],
+                    highs[mask],
+                    alpha=0.2,
+                    color=line.get_color(),
+                    linewidth=0,
+                )
+
         ax.set_xlabel("privacy budget ε")
         ax.set_yscale('log')
         ax.set_title(ds_name)
         ax.grid(True, linestyle="--", alpha=0.4)
-        
+
     axes[0].set_ylabel("relative L1 error, log scale")
-    fig.suptitle(f"Relative L1 Error as Function of Privacy Budget, number of tuples at most {round(num_tuples / 1000)}K",
-                 y=1.02)
+    fig.suptitle(
+        f"Relative L1 Error as Function of Privacy Budget, number of tuples at most {round(num_tuples / 1000)}K",
+        y=1.02,
+    )
     fig.tight_layout()
 
-    if save:
-        import os
-        os.makedirs(os.path.dirname(outfile), exist_ok=True)
-        plt.savefig(outfile, dpi=180, bbox_inches="tight")
-        print(f"Saved {outfile}")
+    import os
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
+    plt.savefig(outfile, dpi=256, bbox_inches="tight")
+    print(f"Saved {outfile}")
     plt.show()
 
 
 def run_experiment_4(
         epsilon: float = 1.0,
-        num_tuples: int = 30000,
+        num_tuples: int = 100000,
+        num_tuples_repair: int = 1,
         repetitions: int = 5,
-        outfile="plots/experiment4.xlsx",
-        seed=123
+        outfile="plots/experiment4.xlsx"
 ):
     # ==== DP-SGD / training params ====
     DP_NOISE_MULT = 1.0        # Gaussian noise multiplier
@@ -750,33 +890,39 @@ def run_experiment_4(
         criteria = spec["criteria"]
 
         # accumulators: criterion -> sums
-        sum_linear = defaultdict(lambda: np.array([0.0, 0.0], dtype=float))   # (MAE, CSP)
-        sum_mlp    = defaultdict(lambda: np.array([0.0, 0.0], dtype=float))   # (MAE, CSP)
-        sum_tvd    = defaultdict(float)                                       # ProxyMutualInformationTVD
-        sum_repair = defaultdict(float)                                       # ProxyRepairMaxSat
-        sum_tc     = defaultdict(float)                                       # TupleContribution
+        sum_linear    = defaultdict(lambda: np.array([0.0, 0.0], dtype=float))   # (MAE, CSP)
+        sum_mlp       = defaultdict(lambda: np.array([0.0, 0.0], dtype=float))   # (MAE, CSP)
+        sum_mi        = defaultdict(float)                                              # MutualInformation
+        sum_tvd       = defaultdict(float)                                              # ProxyMutualInformationTVD
+        sum_repair    = defaultdict(float)                                              # ProxyRepairMaxSat
+        sum_tc        = defaultdict(float)                                              # TupleContribution
 
         for rep in range(repetitions):
-            rep_seed = seed + rep
-
             for criterion in criteria:
                 protected, response, admissible = criterion[0], criterion[1], criterion[2]
                 crit_label = f"{protected}->{response} | {admissible}".lower()
 
                 # encode and clean only needed columns
                 df = _encode_and_clean(path, criterion)
+                df_repair = df.sample(n=num_tuples_repair)
 
                 # limit number of tuples
                 n_total = len(df)
                 n_use = int(min(n_total, num_tuples))
                 if n_use < n_total:
-                    df = df.sample(n=n_use, random_state=rep_seed)
+                    df = df.sample(n=n_use)
 
-                # ======= PROXY MEASURES =======
+                # ======= MEASURES =======
+                mutual_information = MutualInformation(data=df)
+                sum_mi[crit_label] += float(mutual_information.calculate([criterion], epsilon=epsilon))
+
                 tvd_proxy = ProxyMutualInformationTVD(data=df)
                 sum_tvd[crit_label] += float(tvd_proxy.calculate([criterion], epsilon=epsilon))
 
-                repair_proxy = ProxyRepairMaxSat(data=df)
+                if path == "data/census.csv" or path == "data/stackoverflow.csv":
+                    repair_proxy = ProxyRepairMaxSat(data=df_repair)
+                else:
+                    repair_proxy = ProxyRepairMaxSat(data=df)
                 sum_repair[crit_label] += float(repair_proxy.calculate([criterion], epsilon=epsilon))
 
                 tc_proxy = TupleContribution(data=df)
@@ -801,15 +947,13 @@ def run_experiment_4(
                     stratify = None
 
                 X_train, X_test, y_train, y_test = train_test_split(
-                    X_full, y_full, test_size=TEST_SIZE,
-                    random_state=rep_seed, stratify=stratify
+                    X_full, y_full, test_size=TEST_SIZE, stratify=stratify
                 )
 
                 # indices for fairness computation
                 idx_all = np.arange(len(X_full))
                 _, idx_test = train_test_split(
-                    idx_all, test_size=TEST_SIZE,
-                    random_state=rep_seed, stratify=stratify
+                    idx_all, test_size=TEST_SIZE, stratify=stratify
                 )
                 prot_test = df[protected].iloc[idx_test].reset_index(drop=True)
                 if admissible:
@@ -867,9 +1011,9 @@ def run_experiment_4(
     # ===== Build one big table with row MultiIndex (Dataset, Criterion) =====
     row_index = pd.MultiIndex.from_tuples(all_index, names=["Dataset", "Criterion"])
     col_index = pd.MultiIndex.from_tuples([
-        (r"$\mathcal{U}^{TVD}_{MI}$", ""),
-        (r"$\mathcal{U}^{SAT}_{R}$", ""),
-        (r"$\mathcal{U}_{TC}$", ""),
+        ("ProxyMutualInformationTVD", ""),
+        ("RepairMaxSat", ""),
+        ("TupleContribution", ""),
         ("Regression", "Accuracy"),
         ("Regression", "Fairness"),
         ("Random Forest", "Accuracy"),
@@ -902,4 +1046,4 @@ if __name__ == "__main__":
     run_experiment_1()
     run_experiment_2()
     run_experiment_3()
-    run_experiment_4()
+    # run_experiment_4()

@@ -63,7 +63,8 @@ class MutualInformation:
 
         if epsilon is not None:
             n = len(self.dataset)
-            sensitivity = len(fairness_criteria) * ((2 / n) * math.log(n) + ((n - 1) / n) * math.log(n / (n - 1)))
+            sensitivity = len(fairness_criteria) * ((2 / n) * math.log((n + 1) / 2) +
+                                                    ((n - 1) / n) * math.log((n + 1) / (n - 1)))
             mi = mi + np.random.laplace(loc=0, scale=sensitivity / epsilon)
 
         elapsed_time = time.time() - start_time
