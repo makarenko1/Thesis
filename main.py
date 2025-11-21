@@ -275,7 +275,7 @@ census_criteria = [["HEALTH", "INCTOT", "EDUC"], ["HEALTH", "OCC", "EDUC"], ["HE
                    ["HEALTH", "INCTOT", "AGE"]]
 
 stackoverflow_criteria = [["Country", "RemoteWork", "Employment"], ["Age", "PurchaseInfluence", "OrgSize"],
-                          ["Country", "DevType", "YearsCodePro"], ["Age", "MainBranch", "EdLevel"]]
+                          ["Country", "MainBranch", "YearsCodePro"], ["Age", "MainBranch", "EdLevel"]]
 
 compas_criteria = [["race", "is_recid", "age_cat"], ["sex", "is_recid", "priors_count"],
                    ["race", "decile_score", "c_charge_degree"], ["sex", "v_decile_score", "age_cat"]]
@@ -366,7 +366,7 @@ def _encode_and_clean(data_path, cols):
     return df
 
 
-def plot_legend(save=True, outfile="plots/legend.png"):
+def plot_legend(outfile="plots/legend.png"):
     """Creating a standalone legend figure for Experiment 1 with the four measures arranged in a single horizontal row,
     and save it to `outfile`.
     """
@@ -400,11 +400,9 @@ def plot_legend(save=True, outfile="plots/legend.png"):
         fontsize=10,
     )
 
-    if save:
-        import os
-        os.makedirs(os.path.dirname(outfile), exist_ok=True)
-        plt.savefig(outfile, dpi=180, bbox_inches="tight")
-        print(f"Saved {outfile}")
+    import os
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
+    plt.savefig(outfile, dpi=180, bbox_inches="tight")
     plt.show()
 
 
@@ -452,7 +450,7 @@ def run_experiment_1(
         }
 
         for measure_name, measure_cls in measures.items():
-            if measure_name == "Proxy RepairMaxSat" and path in ["data/census.csv", "data/stackoverflow.csv"]:
+            if measure_name == "Proxy RepairMaxSat" and path == "data/census.csv":  # this dataset timeouted whole
                 # no data -> all NaNs
                 for _ in num_tupless:
                     results[measure_name]["mean"].append(np.nan)
@@ -541,7 +539,6 @@ def run_experiment_1(
     import os
     os.makedirs(os.path.dirname(outfile), exist_ok=True)
     plt.savefig(outfile, dpi=256, bbox_inches="tight")
-    print(f"Saved {outfile}")
     plt.show()
 
 
@@ -584,9 +581,7 @@ def run_experiment_2(
             flag_timeout = False
             for num_criteria in range(1, len(criteria) + 1):
                 # cases we skip entirely
-                if (measure_name == "Proxy RepairMaxSat" and
-                        (path == "data/census.csv" or
-                         (path == "data/stackoverflow.csv" and num_criteria > 2))):
+                if measure_name == "Proxy RepairMaxSat" and path == "data/census.csv":  # this dataset timeouted
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
                     results[measure_name]["max"].append(np.nan)
@@ -674,7 +669,6 @@ def run_experiment_2(
     import os
     os.makedirs(os.path.dirname(outfile), exist_ok=True)
     plt.savefig(outfile, dpi=256, bbox_inches="tight")
-    print(f"Saved {outfile}")
     plt.show()
 
 
@@ -725,7 +719,7 @@ def run_experiment_3(
             m = measure_cls(data=sample)
 
             # skip RepairMaxSat on huge datasets (as before)
-            if measure_name == "Proxy RepairMaxSat" and path in ["data/census.csv", "data/stackoverflow.csv"]:
+            if measure_name == "Proxy RepairMaxSat" and path == "data/census.csv":  # this dataset timeouted
                 for _ in epsilons:
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
@@ -811,14 +805,13 @@ def run_experiment_3(
     import os
     os.makedirs(os.path.dirname(outfile), exist_ok=True)
     plt.savefig(outfile, dpi=256, bbox_inches="tight")
-    print(f"Saved {outfile}")
     plt.show()
 
 
 def run_experiment_4_unconditional(
         epsilon: float = 1.0,
         num_tuples: int = 100000,
-        num_tuples_repair: int = 1,
+        num_tuples_repair: int = 1000,
         repetitions: int = 5,
         outfile: str = "plots/experiment4_unconditional.xlsx",
 ):
@@ -949,7 +942,7 @@ def run_experiment_4_unconditional(
 
                 # encode and clean only needed columns (protected + response)
                 df = _encode_and_clean(path, crit_uncond)
-                df_repair = df.sample(n=num_tuples_repair)
+                df_repair = df.sample(n=min(num_tuples_repair, len(df)))
 
                 # limit number of tuples
                 n_total = len(df)
@@ -1116,7 +1109,8 @@ def run_experiment_4_unconditional(
 
     ax.set_xticks(x)
     ax.set_xticklabels(crit_labels, rotation=45, ha="right")
-    ax.set_ylabel("Unfairness / Measure value")
+    ax.set_yscale('log')
+    ax.set_ylabel("Unfairness / Measure value (log scale)")
     ax.set_title("Unconditional: Measures and Regression Demographic Parity per Criterion")
     ax.legend()
     plt.tight_layout()
@@ -1124,7 +1118,7 @@ def run_experiment_4_unconditional(
     png_outfile = os.path.splitext(outfile)[0] + ".png"
     os.makedirs(os.path.dirname(png_outfile), exist_ok=True)
     plt.savefig(png_outfile, dpi=256, bbox_inches="tight")
-    plt.close(fig)
+    plt.show()
     # ----------------------------------------
 
     # print without truncation
@@ -1145,7 +1139,7 @@ def run_experiment_4_unconditional(
 def run_experiment_4_conditional(
         epsilon: float = 1.0,
         num_tuples: int = 100000,
-        num_tuples_repair: int = 1,
+        num_tuples_repair: int = 1000,
         repetitions: int = 5,
         outfile="plots/experiment4_conditional.xlsx"
 ):
@@ -1278,7 +1272,7 @@ def run_experiment_4_conditional(
 
                 # encode and clean only needed columns
                 df = _encode_and_clean(path, criterion)
-                df_repair = df.sample(n=num_tuples_repair)
+                df_repair = df.sample(n=min(num_tuples_repair, len(df)))
 
                 # limit number of tuples
                 n_total = len(df)
@@ -1446,7 +1440,7 @@ def run_experiment_4_conditional(
 
     ax.set_xticks(x)
     ax.set_xticklabels(crit_labels, rotation=45, ha="right")
-    ax.set_ylabel("Unfairness / Measure value")
+    ax.set_ylabel("Unfairness / Measure value (log scale)")
     ax.set_title("Conditional: Measures and Regression CSP per Criterion")
     ax.legend()
     plt.tight_layout()
@@ -1454,7 +1448,7 @@ def run_experiment_4_conditional(
     png_outfile = os.path.splitext(outfile)[0] + ".png"
     os.makedirs(os.path.dirname(png_outfile), exist_ok=True)
     plt.savefig(png_outfile, dpi=256, bbox_inches="tight")
-    plt.close(fig)
+    plt.show()
     # ----------------------------------------
 
     # print without truncation
@@ -1476,8 +1470,8 @@ if __name__ == "__main__":
     # create_plot_1()
     # create_plot_2()
     # plot_legend()
-    # run_experiment_1()
-    # run_experiment_2()
-    # run_experiment_3()
-    run_experiment_4_unconditional()
-    run_experiment_4_conditional()
+    run_experiment_1()
+    run_experiment_2()
+    run_experiment_3()
+    # run_experiment_4_unconditional()
+    # run_experiment_4_conditional()
