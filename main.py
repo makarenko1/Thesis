@@ -275,7 +275,7 @@ census_criteria = [["HEALTH", "INCTOT", "EDUC"], ["HEALTH", "OCC", "EDUC"], ["HE
                    ["HEALTH", "INCTOT", "AGE"]]
 
 stackoverflow_criteria = [["Country", "RemoteWork", "Employment"], ["Age", "PurchaseInfluence", "OrgSize"],
-                          ["Country", "DevType", "YearsCodePro"], ["Age", "BuyNewTool", "BuildvsBuy"]]
+                          ["Country", "DevType", "YearsCodePro"], ["Age", "MainBranch", "EdLevel"]]
 
 compas_criteria = [["race", "is_recid", "age_cat"], ["sex", "is_recid", "priors_count"],
                    ["race", "decile_score", "c_charge_degree"], ["sex", "v_decile_score", "age_cat"]]
@@ -314,11 +314,55 @@ measures = {
 
 timeout_seconds = 1 * 60 * 60
 
+from sklearn.preprocessing import LabelEncoder
+import pandas as pd
+import numpy as np
+
 def _encode_and_clean(data_path, cols):
+    """
+    Read CSV, clean missing values, normalize numeric columns, and label-encode
+    categorical columns in `cols`.
+
+    - Replace ["NA", "N/A", ""] with NaN and drop rows with missing values in `cols`.
+    - For numeric columns in `cols`, replace negative values with 0.
+    - For data/census.csv:
+        * Bin AGE into buckets of size 10 (e.g., 1–10 -> 10, 11–20 -> 20, ...).
+        * Drop rows with INCTOT > 200000.
+        * Discretize INCTOT into 10,000-wide buckets (0–9999 -> 0, 10000–19999 -> 10000, ...).
+    - For categorical columns in `cols`, apply LabelEncoder.
+    """
     df = pd.read_csv(data_path)
     df = df.replace(["NA", "N/A", ""], pd.NA).dropna(subset=cols).copy()
+
+    # 1) Numeric: replace negative values with 0 (only in selected cols)
     for c in cols:
-        df[c] = LabelEncoder().fit_transform(df[c])
+        if c in df.columns and pd.api.types.is_numeric_dtype(df[c]):
+            df.loc[df[c] < 0, c] = 0
+
+    # 2) Special handling for IPUMS-CPS census data
+    if data_path == "data/census.csv":
+        # Bin AGE into buckets of 10: 1–10 -> 10, 11–20 -> 20, ...
+        if "AGE" in df.columns:
+            age = pd.to_numeric(df["AGE"], errors="coerce")
+            # Clamp to at least 1 so that 0 or invalids go into the first bucket
+            age = age.fillna(1)
+            age = np.clip(age, 1, None)
+            # (age-1)//10 gives 0 for 1–10, 1 for 11–20, etc.; then +1 and *10 -> 10, 20, ...
+            df["AGE"] = (((age - 1) // 10) + 1) * 10
+
+        # Remove INCTOT > 200000 and discretize into 10k buckets
+        if "INCTOT" in df.columns:
+            inctot = pd.to_numeric(df["INCTOT"], errors="coerce")
+            df = df[inctot <= 200000].copy()
+            inctot = pd.to_numeric(df["INCTOT"], errors="coerce").fillna(0)
+            # Bucket size 10,000; adjust if you want different granularity
+            df["INCTOT"] = (inctot // 10000) * 10000
+
+    # 3) Categorical: label-encode only non-numeric columns in `cols`
+    for c in cols:
+        if c in df.columns and not pd.api.types.is_numeric_dtype(df[c]):
+            df[c] = LabelEncoder().fit_transform(df[c].astype(str))
+
     return df
 
 
@@ -771,13 +815,343 @@ def run_experiment_3(
     plt.show()
 
 
-def run_experiment_4(
+def run_experiment_4_unconditional(
         epsilon: float = 1.0,
         num_tuples: int = 100000,
         num_tuples_repair: int = 1,
         repetitions: int = 5,
-        outfile="plots/experiment4.xlsx"
+        outfile: str = "plots/experiment4_unconditional.xlsx",
 ):
+    import os
+    import matplotlib.pyplot as plt
+
+    # ==== DP-SGD / training params ====
+    DP_NOISE_MULT = 1.0        # Gaussian noise multiplier
+    DP_MAX_GRAD_NORM = 1.0     # Per-sample clipping norm
+    BATCH_SIZE = 300000        # we'll batch smaller if sample is smaller
+    EPOCHS = 5
+    LR = 1e-2
+    POS_THRESHOLD = 0.5        # for thresholding predictions
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+    TEST_SIZE = 0.3
+
+    # ==== Models ====
+    class DPLinear(nn.Module):
+        """Regression model (DP-linear with sigmoid)."""
+        def __init__(self, in_dim: int):
+            super().__init__()
+            self.linear = nn.Linear(in_dim, 1)
+
+        def forward(self, x):
+            return torch.sigmoid(self.linear(x))  # keep outputs in [0,1]
+
+    class DPMLP(nn.Module):
+        """Random Forest proxy model (DP-MLP with sigmoid)."""
+        def __init__(self, in_dim: int, hidden: int = 64):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(in_dim, hidden),
+                nn.ReLU(),
+                nn.Linear(hidden, 1),
+            )
+
+        def forward(self, x):
+            return torch.sigmoid(self.net(x))     # keep outputs in [0,1]
+
+    # ==== Fairness: Demographic Parity (unconditional) ====
+    def _demographic_parity(y_hat: np.ndarray,
+                            protected: pd.Series,
+                            threshold: float = POS_THRESHOLD) -> float:
+        """
+        Demographic parity gap:
+            max_{s,s'} | P(ŷ=1 | S=s) - P(ŷ=1 | S=s') |.
+        """
+        y_pos = (y_hat >= threshold).astype(int)
+        rates = []
+        for s in np.unique(protected):
+            mask_s = (protected == s)
+            if mask_s.sum() == 0:
+                continue
+            rates.append(y_pos[mask_s].mean())
+        if len(rates) == 0:
+            return 0.0
+        return float(np.max(rates) - np.min(rates))
+
+    # ==== Torch helpers ====
+    def _to_torch(X: np.ndarray, y: np.ndarray) -> tuple[TensorDataset, int]:
+        X_t = torch.tensor(X, dtype=torch.float32)
+        y_t = torch.tensor(y, dtype=torch.float32).reshape(-1, 1)
+        return TensorDataset(X_t, y_t), X_t.shape[1]
+
+    def _train_dp_sgd(model: nn.Module,
+                      train_loader: DataLoader,
+                      epochs: int = EPOCHS,
+                      lr: float = LR,
+                      noise_multiplier: float = DP_NOISE_MULT,
+                      max_grad_norm: float = DP_MAX_GRAD_NORM) -> None:
+        model.to(DEVICE)
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.0)
+        loss_fn = nn.L1Loss()
+        privacy_engine = PrivacyEngine()
+        model, optimizer, train_loader = privacy_engine.make_private(
+            module=model,
+            optimizer=optimizer,
+            data_loader=train_loader,
+            noise_multiplier=noise_multiplier,
+            max_grad_norm=max_grad_norm,
+        )
+
+        model.train()
+        for _ in range(epochs):
+            for xb, yb in train_loader:
+                xb = xb.to(DEVICE); yb = yb.to(DEVICE)
+                optimizer.zero_grad()
+                preds = model(xb)
+                loss = loss_fn(preds, yb)
+                loss.backward()
+                optimizer.step()
+
+    def _predict(model: nn.Module, X: np.ndarray) -> np.ndarray:
+        model.eval()
+        with torch.no_grad():
+            X_t = torch.tensor(X, dtype=torch.float32, device=DEVICE)
+            yhat = model(X_t).cpu().numpy().reshape(-1)
+        return np.clip(yhat, 0.0, 1.0)
+
+    # ===== Global rows for ALL datasets =====
+    all_rows = []
+    all_index = []   # list of (dataset_name, criterion_label) tuples
+
+    # === Core loop over datasets and criteria ===
+    for ds_name, spec in datasets.items():
+        print(f"\n=== DATASET (unconditional): {ds_name} ===")
+        path = spec["path"]
+        criteria = spec["criteria"]
+
+        # accumulators: criterion -> sums
+        sum_linear = defaultdict(lambda: np.array([0.0, 0.0], dtype=float))   # (MAE, DP)
+        sum_mlp    = defaultdict(lambda: np.array([0.0, 0.0], dtype=float))   # (MAE, DP)
+        sum_mi     = defaultdict(float)                                       # MutualInformation
+        sum_tvd    = defaultdict(float)                                       # ProxyMutualInformationTVD
+        sum_repair = defaultdict(float)                                       # ProxyRepairMaxSat
+        sum_tc     = defaultdict(float)                                       # TupleContribution
+
+        for rep in range(repetitions):
+            for criterion in criteria:
+                # Use only protected + response; ignore admissible for the unconditional version
+                protected = criterion[0]
+                response = criterion[1]
+                admissible = criterion[2] if len(criterion) > 2 else None
+
+                crit_label = f"{protected}->{response}".lower()
+                crit_uncond = [protected, response]  # 2-element criterion for unconditional measures
+
+                # encode and clean only needed columns (protected + response)
+                df = _encode_and_clean(path, crit_uncond)
+                df_repair = df.sample(n=num_tuples_repair)
+
+                # limit number of tuples
+                n_total = len(df)
+                n_use = int(min(n_total, num_tuples))
+                if n_use < n_total:
+                    df = df.sample(n=n_use)
+
+                # ======= MEASURES (unconditional; pass 2-element criterion) =======
+                mutual_information = MutualInformation(data=df)
+                sum_mi[crit_label] += float(mutual_information.calculate([crit_uncond], epsilon=epsilon))
+
+                tvd_proxy = ProxyMutualInformationTVD(data=df)
+                sum_tvd[crit_label] += float(tvd_proxy.calculate([crit_uncond], epsilon=epsilon))
+
+                if path in ["data/census.csv", "data/stackoverflow.csv"]:
+                    repair_proxy = ProxyRepairMaxSat(data=df_repair)
+                else:
+                    repair_proxy = ProxyRepairMaxSat(data=df)
+                sum_repair[crit_label] += float(repair_proxy.calculate([crit_uncond], epsilon=epsilon))
+
+                tc_proxy = TupleContribution(data=df)
+                sum_tc[crit_label] += float(tc_proxy.calculate([crit_uncond], epsilon=epsilon))
+
+                # ======= MODELS (Regression / “Random Forest” proxy MLP) =======
+                feat_cols = [protected]
+                X_full = df[feat_cols].to_numpy(dtype=float)
+
+                # ORIGINAL-SCALE target
+                y_real_full = df[response].to_numpy(dtype=float)
+
+                # scale y to [0, 1] for training
+                y_min = y_real_full.min()
+                y_max = y_real_full.max()
+                if y_max > y_min:
+                    y_full = (y_real_full - y_min) / (y_max - y_min)
+                else:
+                    y_full = np.zeros_like(y_real_full)
+
+                # split (keep both scaled and real targets)
+                stratify = None
+                try:
+                    y_round = np.round(y_full)
+                    if len(np.unique(y_round)) <= 10:
+                        stratify = y_round
+                except Exception:
+                    stratify = None
+
+                X_train, X_test, y_train, y_test, y_real_train, y_real_test = train_test_split(
+                    X_full, y_full, y_real_full,
+                    test_size=TEST_SIZE,
+                    stratify=stratify
+                )
+
+                # indices for fairness computation
+                idx_all = np.arange(len(X_full))
+                _, idx_test = train_test_split(
+                    idx_all, test_size=TEST_SIZE, stratify=stratify
+                )
+                prot_test = df[protected].iloc[idx_test].reset_index(drop=True)
+
+                # to torch
+                train_ds, in_dim = _to_torch(X_train, y_train)
+                effective_batch = min(BATCH_SIZE, len(train_ds))
+                train_loader = DataLoader(
+                    train_ds, batch_size=effective_batch,
+                    shuffle=True, drop_last=False
+                )
+
+                # helper to unscale predictions back to real units
+                def _unscale(pred_scaled: np.ndarray) -> np.ndarray:
+                    if y_max > y_min:
+                        return pred_scaled * (y_max - y_min) + y_min
+                    else:
+                        return np.full_like(pred_scaled, y_min)
+
+                # --- Regression (DPLinear) ---
+                lin = DPLinear(in_dim)
+                _train_dp_sgd(lin, train_loader)
+                yhat_lin_scaled = _predict(lin, X_test)
+                yhat_lin_real = _unscale(yhat_lin_scaled)
+                mae_lin = float(np.mean(np.abs(yhat_lin_real - y_real_test)))  # L1 vs REAL values
+
+                dp_lin = _demographic_parity(
+                    yhat_lin_scaled,
+                    prot_test,
+                    threshold=POS_THRESHOLD
+                )
+                sum_linear[crit_label] += np.array([mae_lin, dp_lin], dtype=float)
+
+                # --- Random Forest (DPMLP proxy) ---
+                mlp = DPMLP(in_dim)
+                _train_dp_sgd(mlp, train_loader)
+                yhat_mlp_scaled = _predict(mlp, X_test)
+                yhat_mlp_real = _unscale(yhat_mlp_scaled)
+                mae_mlp = float(np.mean(np.abs(yhat_mlp_real - y_real_test)))  # L1 vs REAL values
+
+                dp_mlp = _demographic_parity(
+                    yhat_mlp_scaled,
+                    prot_test,
+                    threshold=POS_THRESHOLD
+                )
+                sum_mlp[crit_label] += np.array([mae_mlp, dp_mlp], dtype=float)
+
+        # ===== Averaging over repetitions; append to global table =====
+        crits_sorted = sorted(sum_linear.keys())
+        for crit in crits_sorted:
+            tvd_avg = sum_tvd[crit] / repetitions
+            repair_avg = sum_repair[crit] / repetitions
+            tc_avg = sum_tc[crit] / repetitions
+
+            mae_lin_avg = sum_linear[crit][0] / repetitions
+            dp_lin_avg = sum_linear[crit][1] / repetitions
+            mae_mlp_avg = sum_mlp[crit][0] / repetitions
+            dp_mlp_avg = sum_mlp[crit][1] / repetitions
+
+            all_rows.append([
+                round(tvd_avg, 4),
+                round(repair_avg, 4),
+                round(tc_avg, 4),
+                round(mae_lin_avg, 4),
+                round(dp_lin_avg, 4),
+                round(mae_mlp_avg, 4),
+                round(dp_mlp_avg, 4),
+            ])
+            all_index.append((ds_name, crit))
+
+    # ===== Build one big table with row MultiIndex (Dataset, Criterion) =====
+    row_index = pd.MultiIndex.from_tuples(all_index, names=["Dataset", "Criterion"])
+    col_index = pd.MultiIndex.from_tuples([
+        ("ProxyMutualInformationTVD", ""),
+        ("RepairMaxSat", ""),
+        ("TupleContribution", ""),
+        ("Regression", "L1 Error"),
+        ("Regression", "Unfairness (DP)"),
+        ("Random Forest", "L1 Error"),
+        ("Random Forest", "Unfairness (DP)"),
+    ])
+
+    table_all = pd.DataFrame(all_rows, index=row_index, columns=col_index)
+
+    # ---------- Histogram plot (unconditional) ----------
+    # X-axis: fairness criteria (with dataset), 4 bars per criterion:
+    # 3 proxy measures + Regression unfairness (DP)
+    crit_labels = [f"{ds} | {crit}" for ds, crit in table_all.index]
+    x = np.arange(len(table_all))
+    width = 0.2
+
+    measure_cols = [
+        ("ProxyMutualInformationTVD", ""),
+        ("RepairMaxSat", ""),
+        ("TupleContribution", ""),
+    ]
+    fairness_col = ("Regression", "Unfairness (DP)")
+
+    fig, ax = plt.subplots(figsize=(max(10, len(table_all) * 0.4), 6))
+
+    # positions centered around x
+    offsets = [-1.5 * width, -0.5 * width, 0.5 * width, 1.5 * width]
+    labels = ["TVD", "RepairMaxSat", "TupleContribution", "Regression (DP)"]
+
+    for i, col in enumerate(measure_cols + [fairness_col]):
+        vals = table_all[col].to_numpy(dtype=float)
+        ax.bar(x + offsets[i], vals, width, label=labels[i])
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(crit_labels, rotation=45, ha="right")
+    ax.set_ylabel("Unfairness / Measure value")
+    ax.set_title("Unconditional: Measures and Regression Demographic Parity per Criterion")
+    ax.legend()
+    plt.tight_layout()
+
+    png_outfile = os.path.splitext(outfile)[0] + ".png"
+    os.makedirs(os.path.dirname(png_outfile), exist_ok=True)
+    plt.savefig(png_outfile, dpi=256, bbox_inches="tight")
+    plt.close(fig)
+    # ----------------------------------------
+
+    # print without truncation
+    with pd.option_context(
+        "display.max_rows", None,
+        "display.max_columns", None,
+        "display.width", 200,
+        "display.max_colwidth", None,
+    ):
+        print("\n=== Unconditional experiment (averaged, rounded to 4 decimals) ===")
+        print(table_all)
+
+    # save to Excel
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
+    table_all.to_excel(outfile, merge_cells=True)
+
+
+def run_experiment_4_conditional(
+        epsilon: float = 1.0,
+        num_tuples: int = 100000,
+        num_tuples_repair: int = 1,
+        repetitions: int = 5,
+        outfile="plots/experiment4_conditional.xlsx"
+):
+    import os
+    import matplotlib.pyplot as plt
+
     # ==== DP-SGD / training params ====
     DP_NOISE_MULT = 1.0        # Gaussian noise multiplier
     DP_MAX_GRAD_NORM = 1.0     # Per-sample clipping norm
@@ -892,15 +1266,15 @@ def run_experiment_4(
         # accumulators: criterion -> sums
         sum_linear    = defaultdict(lambda: np.array([0.0, 0.0], dtype=float))   # (MAE, CSP)
         sum_mlp       = defaultdict(lambda: np.array([0.0, 0.0], dtype=float))   # (MAE, CSP)
-        sum_mi        = defaultdict(float)                                              # MutualInformation
-        sum_tvd       = defaultdict(float)                                              # ProxyMutualInformationTVD
-        sum_repair    = defaultdict(float)                                              # ProxyRepairMaxSat
-        sum_tc        = defaultdict(float)                                              # TupleContribution
+        sum_mi        = defaultdict(float)                                       # MutualInformation
+        sum_tvd       = defaultdict(float)                                       # ProxyMutualInformationTVD
+        sum_repair    = defaultdict(float)                                       # ProxyRepairMaxSat
+        sum_tc        = defaultdict(float)                                       # TupleContribution
 
         for rep in range(repetitions):
             for criterion in criteria:
                 protected, response, admissible = criterion[0], criterion[1], criterion[2]
-                crit_label = f"{protected}->{response} | {admissible}".lower()
+                crit_label = f"{protected} , {response} | {admissible}".lower()
 
                 # encode and clean only needed columns
                 df = _encode_and_clean(path, criterion)
@@ -931,13 +1305,19 @@ def run_experiment_4(
                 # ======= MODELS (Regression / Random Forest) =======
                 feat_cols = [protected] + ([admissible] if admissible else [])
                 X_full = df[feat_cols].to_numpy(dtype=float)
-                y_full = df[response].to_numpy(dtype=float)
 
-                # normalize y to [0,1]
-                if np.ptp(y_full) > 0:
-                    y_full = (y_full - y_full.min()) / (np.ptp(y_full))
+                # ORIGINAL-SCALE target
+                y_real_full = df[response].to_numpy(dtype=float)
 
-                # split
+                # scale y to [0, 1] for training
+                y_min = y_real_full.min()
+                y_max = y_real_full.max()
+                if y_max > y_min:
+                    y_full = (y_real_full - y_min) / (y_max - y_min)
+                else:
+                    y_full = np.zeros_like(y_real_full)
+
+                # split (keep both scaled and real targets)
                 stratify = None
                 try:
                     y_round = np.round(y_full)
@@ -946,8 +1326,10 @@ def run_experiment_4(
                 except Exception:
                     stratify = None
 
-                X_train, X_test, y_train, y_test = train_test_split(
-                    X_full, y_full, test_size=TEST_SIZE, stratify=stratify
+                X_train, X_test, y_train, y_test, y_real_train, y_real_test = train_test_split(
+                    X_full, y_full, y_real_full,
+                    test_size=TEST_SIZE,
+                    stratify=stratify
                 )
 
                 # indices for fairness computation
@@ -967,22 +1349,39 @@ def run_experiment_4(
                 train_loader = DataLoader(train_ds, batch_size=effective_batch,
                                           shuffle=True, drop_last=False)
 
+                # helper to unscale predictions back to real units
+                def _unscale(pred_scaled: np.ndarray) -> np.ndarray:
+                    if y_max > y_min:
+                        return pred_scaled * (y_max - y_min) + y_min
+                    else:
+                        return np.full_like(pred_scaled, y_min)
+
                 # --- Regression (DPLinear) ---
                 lin = DPLinear(in_dim)
                 _train_dp_sgd(lin, train_loader)
-                yhat_lin = _predict(lin, X_test)
-                mae_lin = float(np.mean(np.abs(yhat_lin - y_test)))
-                csp_lin = _conditional_statistical_parity(yhat_lin, prot_test, adm_test,
-                                                          threshold=POS_THRESHOLD)
+                yhat_lin_scaled = _predict(lin, X_test)
+                yhat_lin_real = _unscale(yhat_lin_scaled)
+                mae_lin = float(np.mean(np.abs(yhat_lin_real - y_real_test)))  # L1 vs REAL values
+                csp_lin = _conditional_statistical_parity(
+                    yhat_lin_scaled,
+                    prot_test,
+                    adm_test,
+                    threshold=POS_THRESHOLD
+                )
                 sum_linear[crit_label] += np.array([mae_lin, csp_lin], dtype=float)
 
                 # --- Random Forest (DPMLP proxy) ---
                 mlp = DPMLP(in_dim)
                 _train_dp_sgd(mlp, train_loader)
-                yhat_mlp = _predict(mlp, X_test)
-                mae_mlp = float(np.mean(np.abs(yhat_mlp - y_test)))
-                csp_mlp = _conditional_statistical_parity(yhat_mlp, prot_test, adm_test,
-                                                          threshold=POS_THRESHOLD)
+                yhat_mlp_scaled = _predict(mlp, X_test)
+                yhat_mlp_real = _unscale(yhat_mlp_scaled)
+                mae_mlp = float(np.mean(np.abs(yhat_mlp_real - y_real_test)))  # L1 vs REAL values
+                csp_mlp = _conditional_statistical_parity(
+                    yhat_mlp_scaled,
+                    prot_test,
+                    adm_test,
+                    threshold=POS_THRESHOLD
+                )
                 sum_mlp[crit_label] += np.array([mae_mlp, csp_mlp], dtype=float)
 
         # ===== Averaging over repetitions; append to global table =====
@@ -1014,13 +1413,49 @@ def run_experiment_4(
         ("ProxyMutualInformationTVD", ""),
         ("RepairMaxSat", ""),
         ("TupleContribution", ""),
-        ("Regression", "Accuracy"),
-        ("Regression", "Fairness"),
-        ("Random Forest", "Accuracy"),
-        ("Random Forest", "Fairness"),
+        ("Regression", "L1 Error"),
+        ("Regression", "Unfairness (CSP)"),
+        ("Random Forest", "L1 Error"),
+        ("Random Forest", "Unfairness (CSP)"),
     ])
 
     table_all = pd.DataFrame(all_rows, index=row_index, columns=col_index)
+
+    # ---------- Histogram plot (conditional) ----------
+    # X-axis: fairness criteria (with dataset), 4 bars per criterion:
+    # 3 proxy measures + Regression unfairness (CSP)
+    crit_labels = [f"{ds} | {crit}" for ds, crit in table_all.index]
+    x = np.arange(len(table_all))
+    width = 0.2
+
+    measure_cols = [
+        ("ProxyMutualInformationTVD", ""),
+        ("RepairMaxSat", ""),
+        ("TupleContribution", ""),
+    ]
+    fairness_col = ("Regression", "Unfairness (CSP)")
+
+    fig, ax = plt.subplots(figsize=(max(10, len(table_all) * 0.4), 6))
+
+    offsets = [-1.5 * width, -0.5 * width, 0.5 * width, 1.5 * width]
+    labels = ["TVD", "RepairMaxSat", "TupleContribution", "Regression (CSP)"]
+
+    for i, col in enumerate(measure_cols + [fairness_col]):
+        vals = table_all[col].to_numpy(dtype=float)
+        ax.bar(x + offsets[i], vals, width, label=labels[i])
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(crit_labels, rotation=45, ha="right")
+    ax.set_ylabel("Unfairness / Measure value")
+    ax.set_title("Conditional: Measures and Regression CSP per Criterion")
+    ax.legend()
+    plt.tight_layout()
+
+    png_outfile = os.path.splitext(outfile)[0] + ".png"
+    os.makedirs(os.path.dirname(png_outfile), exist_ok=True)
+    plt.savefig(png_outfile, dpi=256, bbox_inches="tight")
+    plt.close(fig)
+    # ----------------------------------------
 
     # print without truncation
     with pd.option_context(
@@ -1033,17 +1468,16 @@ def run_experiment_4(
         print(table_all)
 
     # save to Excel
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
     table_all.to_excel(outfile, merge_cells=True)
-    print(f"\nSaved combined table to {outfile}")
-
-
 
 
 if __name__ == "__main__":
     # create_plot_1()
     # create_plot_2()
     # plot_legend()
-    run_experiment_1()
-    run_experiment_2()
-    run_experiment_3()
-    # run_experiment_4()
+    # run_experiment_1()
+    # run_experiment_2()
+    # run_experiment_3()
+    run_experiment_4_unconditional()
+    run_experiment_4_conditional()
