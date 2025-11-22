@@ -366,7 +366,7 @@ def _encode_and_clean(data_path, cols):
     return df
 
 
-def plot_legend(outfile="plots/legend.png"):
+def plot_legend(outfile="plots/legend_proxies.png"):
     """Creating a standalone legend figure for Experiment 1 with the four measures arranged in a single horizontal row,
     and save it to `outfile`.
     """
@@ -504,8 +504,20 @@ def run_experiment_1(
             f"{num_tuples // 1000}K" if num_tuples % 1000 == 0 else str(num_tuples)
             for num_tuples in num_tupless
         ]
-        ax.set_xticks(xs)
-        ax.set_xticklabels(tick_labels)
+
+        # ↓↓↓ reduce xtick labels specifically for IPUMS-CPS ↓↓↓
+        if ds_name == "IPUMS-CPS":
+            # e.g. show only indices 0, 2, 4, 6 (for 7 points)
+            if len(num_tupless) >= 7:
+                show_idx = [0, 2, 4, 6]
+            else:
+                show_idx = list(range(len(num_tupless)))
+            ax.set_xticks(np.array(show_idx))
+            ax.set_xticklabels([tick_labels[i] for i in show_idx])
+        else:
+            ax.set_xticks(xs)
+            ax.set_xticklabels(tick_labels)
+        # ↑↑↑ end IPUMS-CPS special-casing ↑↑↑
 
         for measure_name, stats in results.items():
             means = np.array(stats["mean"])
@@ -1945,7 +1957,7 @@ if __name__ == "__main__":
     # run_experiment_1()
     # run_experiment_2()
     # run_experiment_3()
-    run_experiment_4()
+    # run_experiment_4()
     # run_experiment_5()
     # run_experiment_6()
     run_experiment_7_unconditional()
