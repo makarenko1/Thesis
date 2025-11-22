@@ -929,12 +929,12 @@ def run_experiment_4(
 
         ax.set_xticks(x)
         ax.set_xticklabels(crit_labels, rotation=45, ha="right")
-        ax.set_ylabel("Value")
+        ax.set_ylabel("measure value")
         ax.set_title(ds_name)
         ax.grid(axis="y", linestyle="--", alpha=0.3)
 
-    fig.suptitle(f"Comparison of MutualInformation and ProxyMutualInformationTVD as Functions of Number of Tuples, "
-                 f"ε = {epsilon}",
+    fig.suptitle(f"Comparison of MutualInformation and ProxyMutualInformationTVD, at most "
+                 f"{round(num_tuples / 1000)}K tuples, ε = {epsilon}",
                  y=1.03)
     fig.tight_layout()
 
