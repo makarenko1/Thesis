@@ -821,11 +821,11 @@ def run_experiment_4(
     """
 
     plt.rcParams.update({
-        "axes.titlesize": 34,
+        "axes.titlesize": 32,
         "axes.labelsize": 30,
         "xtick.labelsize": 24,
-        "ytick.labelsize": 24,
-        "figure.titlesize": 34,
+        "ytick.labelsize": 22,
+        "figure.titlesize": 32,
     })
 
     fig, axes = plt.subplots(1, 5, figsize=(30, 6), sharey=False)
@@ -929,9 +929,10 @@ def run_experiment_4(
 
         ax.set_xticks(x)
         ax.set_xticklabels(crit_labels, rotation=45, ha="right")
-        ax.set_ylabel("measure value")
         ax.set_title(ds_name)
         ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+    axes[0].set_ylabel("measure value")
 
     fig.suptitle(f"Comparison of MutualInformation and ProxyMutualInformationTVD, at most "
                  f"{round(num_tuples / 1000)}K tuples, ε = {epsilon}",
@@ -945,16 +946,26 @@ def run_experiment_4(
 
 
 def run_experiment_5(
-    ks=(10, 50, 100, 200, 500, 1000),
     num_tuples=100000,
     repetitions=5,
     epsilon=1.0,
     outfile="plots/experiment5.png",
 ):
-    """Plot TupleContribution runtime over `repetitions` per dataset while keeping #tuples constant and increasing
-    the k."""
+    """Plot TupleContribution runtime over `repetitions` per dataset while keeping #tuples constant
+    and increasing k (using ks_per_dataset for each dataset)."""
 
-    # Font sizes similar to your other experiments
+    ks_per_dataset = {
+        "Adult": [1000, 5000, 10000, 15000, 30000],
+        "IPUMS-CPS": [5000, 10000, 50000, 100000, 300000, 600000, 1000000],
+        "Stackoverflow": [5000, 10000, 20000, 40000, 60000],
+        "Compas": [1000, 1500, 3000, 7000, 10000],
+        "Healthcare": [100, 200, 400, 700, 1000],
+    }
+
+    import os
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import LogLocator  # <-- added
+
     plt.rcParams.update({
         "axes.titlesize": 34,
         "axes.labelsize": 30,
@@ -973,12 +984,14 @@ def run_experiment_5(
         path = spec["path"]
         criteria = spec["criteria"]
 
+        # --- use dataset-specific ks ---
+        ks = ks_per_dataset[ds_name]
+
         # Collect all columns used by any criterion for this dataset
         cols_list = []
         for criterion in criteria:
             cols_list += criterion
-        # deduplicate while preserving order
-        cols_list = list(dict.fromkeys(cols_list))
+        cols_list = list(dict.fromkeys(cols_list))  # deduplicate while preserving order
 
         # Encode and clean once per dataset
         data = _encode_and_clean(path, cols_list)
@@ -996,7 +1009,7 @@ def run_experiment_5(
         for k in ks:
             if flag_timeout:
                 # If we already timed out for a smaller k, fill with NaNs
-                print(f"Skipping the iteration due to timeout.")
+                print("Skipping the iteration due to timeout.")
                 stats["mean"].append(np.nan)
                 stats["min"].append(np.nan)
                 stats["max"].append(np.nan)
@@ -1016,7 +1029,7 @@ def run_experiment_5(
                         elapsed_time = time.time() - start_time
                         runtimes_rep.append(elapsed_time)
                     except TimeoutError:
-                        print(f"Skipping the iteration due to timeout.")
+                        print("Skipping the iteration due to timeout.")
                         runtimes_rep.append(np.nan)
                         flag_timeout = True
                         break
@@ -1036,11 +1049,6 @@ def run_experiment_5(
 
         # ---- Plotting for this dataset ----
         xs = np.arange(len(ks))
-        tick_labels = [str(k) for k in ks]
-
-        ax.set_xticks(xs)
-        ax.set_xticklabels(tick_labels)
-
         means = np.array(stats["mean"])
         lows  = np.array(stats["min"])
         highs = np.array(stats["max"])
@@ -1061,8 +1069,25 @@ def run_experiment_5(
                 linewidth=0,
             )
 
+        # tick labels (fewer for IPUMS-CPS)
+        full_tick_labels = [str(k) if k % 1000 != 0 else f"{k // 1000}K" for k in ks]
+        if ds_name == "IPUMS-CPS":
+            show_idx = [0, 2, 4, 6] if len(ks) >= 7 else list(range(len(ks)))
+            ax.set_xticks(np.array(show_idx))
+            ax.set_xticklabels([full_tick_labels[i] for i in show_idx])
+        else:
+            ax.set_xticks(xs)
+            ax.set_xticklabels(full_tick_labels)
+
         ax.set_xlabel("k (top-k tuples)")
         ax.set_yscale('log')
+
+        # ↓↓↓ FEWER **Y** TICKS FOR HEALTHCARE ↓↓↓
+        if ds_name == "Healthcare":
+            # e.g. at most 3 major ticks on log scale
+            ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=3))
+        # ↑↑↑
+
         ax.set_title(ds_name)
         ax.grid(True, linestyle="--", alpha=0.4)
 
@@ -1073,27 +1098,32 @@ def run_experiment_5(
     )
     fig.tight_layout()
 
-    import os
     os.makedirs(os.path.dirname(outfile), exist_ok=True)
     plt.savefig(outfile, dpi=256, bbox_inches="tight")
     plt.show()
 
 
 def run_experiment_6(
-    ks=(10, 50, 100, 200, 500, 1000),
     num_tuples=100000,
     repetitions=5,
     epsilon=1.0,
-    outfile="plots/experiment5.png",
+    outfile="plots/experiment6.png",
 ):
-    """Plot average relative L1 error of TupleContribution over `repetitions` per dataset, while keeping #tuples
-    constant and increasing the k."""
+    """Plot average relative L1 error of TupleContribution over `repetitions` per dataset,
+    while keeping #tuples constant and increasing k (using ks_per_dataset for each dataset)."""
+
+    ks_per_dataset = {
+        "Adult": [1000, 5000, 10000, 15000, 30000],
+        "IPUMS-CPS": [5000, 10000, 50000, 100000, 300000, 600000, 1000000],
+        "Stackoverflow": [5000, 10000, 20000, 40000, 60000],
+        "Compas": [1000, 1500, 3000, 7000, 10000],
+        "Healthcare": [100, 200, 400, 700, 1000],
+    }
 
     def _rel_error(x, y, tiny=1e-100):
         denom = max(abs(y), tiny)  # ensure we do not divide by 0
         return abs(x - y) / denom
 
-    # Font sizes similar to your other experiments
     plt.rcParams.update({
         "axes.titlesize": 34,
         "axes.labelsize": 30,
@@ -1111,6 +1141,9 @@ def run_experiment_6(
     for ax, (ds_name, spec) in zip(axes, datasets.items()):
         path = spec["path"]
         criteria = spec["criteria"]
+
+        # --- use dataset-specific ks ---
+        ks = ks_per_dataset[ds_name]
 
         # Collect all columns used by any criterion for this dataset
         cols_list = []
@@ -1136,12 +1169,12 @@ def run_experiment_6(
                 try:
                     non_private_result = executor.submit(
                         m.calculate,
-                        criteria,          # use all fairness criteria as in other experiments
+                        criteria,
                         k=k,
                         epsilon=None
                     ).result(timeout=timeout_seconds)
                 except TimeoutError:
-                    print(f"Skipping the iteration due to timeout.")
+                    print("Skipping the iteration due to timeout.")
                     stats["mean"].append(np.nan)
                     stats["min"].append(np.nan)
                     stats["max"].append(np.nan)
@@ -1160,7 +1193,7 @@ def run_experiment_6(
                         ).result(timeout=timeout_seconds)
                         errs.append(_rel_error(private_result, non_private_result))
                     except TimeoutError:
-                        print(f"Skipping the iteration due to timeout.")
+                        print("Skipping the iteration due to timeout.")
                         errs.append(np.nan)
                         break
 
@@ -1178,12 +1211,13 @@ def run_experiment_6(
             stats["max"].append(max_v)
 
         # ---- Plotting for this dataset ----
-        x = np.array(ks, dtype=float)
+        x = np.arange(len(ks))
         means = np.array(stats["mean"])
         lows  = np.array(stats["min"])
         highs = np.array(stats["max"])
 
-        line, = ax.plot(x, means, marker="o", linewidth=2, label="TupleContribution L1 error")
+        line, = ax.plot(x, means, marker="o", linewidth=2,
+                        label="TupleContribution L1 error")
 
         mask = ~np.isnan(means) & ~np.isnan(lows) & ~np.isnan(highs)
         if mask.any():
@@ -1195,6 +1229,15 @@ def run_experiment_6(
                 color=line.get_color(),
                 linewidth=0,
             )
+
+        full_tick_labels = [str(k) if k % 1000 != 0 else f"{k // 1000}K" for k in ks]
+        if ds_name == "IPUMS-CPS":
+            show_idx = [0, 2, 4, 6] if len(ks) >= 7 else list(range(len(ks)))
+            ax.set_xticks(np.array(show_idx))
+            ax.set_xticklabels([full_tick_labels[i] for i in show_idx])
+        else:
+            ax.set_xticks(x)
+            ax.set_xticklabels(full_tick_labels)
 
         ax.set_xlabel("k (top-k tuples)")
         ax.set_yscale('log')
@@ -1220,7 +1263,7 @@ def run_experiment_7_unconditional(
         num_tuples: int = 100000,
         num_tuples_repair: int = 1000,
         repetitions: int = 5,
-        outfile: str = "plots/experiment4_unconditional.xlsx",
+        outfile: str = "plots/experiment7_unconditional.xlsx",
 ):
     import os
     import matplotlib.pyplot as plt
@@ -1491,9 +1534,17 @@ def run_experiment_7_unconditional(
     table_all = pd.DataFrame(all_rows, index=row_index, columns=col_index)
 
     # ---------- Histogram plot (unconditional) ----------
-    # X-axis: fairness criteria (with dataset), 4 bars per criterion:
-    # 3 proxy measures + Regression unfairness (DP)
+    # Sort criteria by Regression Unfairness (DP)
+    fairness_col = ("Regression", "Unfairness (DP)")
+    fairness_vals = table_all[fairness_col].to_numpy(dtype=float)
+
+    # order = np.argsort(fairness_vals)[::-1]  # for descending (most unfair left)
+    order = np.argsort(fairness_vals)         # ascending (least -> most unfair)
+
+    # Reorder labels and x positions
     crit_labels = [f"{ds} | {crit}" for ds, crit in table_all.index]
+    crit_labels = [crit_labels[i] for i in order]
+
     x = np.arange(len(table_all))
     width = 0.18
 
@@ -1502,9 +1553,7 @@ def run_experiment_7_unconditional(
         ("RepairMaxSat", ""),
         ("TupleContribution", ""),
     ]
-    fairness_col = ("Regression", "Unfairness (DP)")
 
-    # slightly smaller figure and fonts tuned down
     fig, ax = plt.subplots(figsize=(max(8, len(table_all) * 0.25), 4))
 
     offsets = [-1.5 * width, -0.5 * width, 0.5 * width, 1.5 * width]
@@ -1512,6 +1561,7 @@ def run_experiment_7_unconditional(
 
     for i, col in enumerate(measure_cols + [fairness_col]):
         vals = table_all[col].to_numpy(dtype=float)
+        vals = vals[order]   # sort bars by unfairness order
         ax.bar(x + offsets[i], vals, width, label=labels[i])
 
     ax.set_xticks(x)
@@ -1552,7 +1602,7 @@ def run_experiment_7_conditional(
         num_tuples: int = 100000,
         num_tuples_repair: int = 1000,
         repetitions: int = 5,
-        outfile="plots/experiment4_conditional.xlsx"
+        outfile="plots/experiment7_conditional.xlsx"
 ):
     import os
     import matplotlib.pyplot as plt
@@ -1827,9 +1877,16 @@ def run_experiment_7_conditional(
     table_all = pd.DataFrame(all_rows, index=row_index, columns=col_index)
 
     # ---------- Histogram plot (conditional) ----------
-    # X-axis: fairness criteria (with dataset), 4 bars per criterion:
-    # 3 proxy measures + Regression unfairness (CSP)
+    # Sort criteria by Regression Unfairness (CSP)
+    fairness_col = ("Regression", "Unfairness (CSP)")
+    fairness_vals = table_all[fairness_col].to_numpy(dtype=float)
+
+    # order = np.argsort(fairness_vals)[::-1]  # descending (most unfair left)
+    order = np.argsort(fairness_vals)         # ascending
+
     crit_labels = [f"{ds} | {crit}" for ds, crit in table_all.index]
+    crit_labels = [crit_labels[i] for i in order]
+
     x = np.arange(len(table_all))
     width = 0.18
 
@@ -1838,7 +1895,6 @@ def run_experiment_7_conditional(
         ("RepairMaxSat", ""),
         ("TupleContribution", ""),
     ]
-    fairness_col = ("Regression", "Unfairness (CSP)")
 
     fig, ax = plt.subplots(figsize=(max(8, len(table_all) * 0.25), 4))
 
@@ -1847,6 +1903,7 @@ def run_experiment_7_conditional(
 
     for i, col in enumerate(measure_cols + [fairness_col]):
         vals = table_all[col].to_numpy(dtype=float)
+        vals = vals[order]   # sort bars consistently by unfairness
         ax.bar(x + offsets[i], vals, width, label=labels[i])
 
     ax.set_xticks(x)
@@ -1889,8 +1946,8 @@ if __name__ == "__main__":
     # run_experiment_2()
     # run_experiment_3()
     run_experiment_4()
-    run_experiment_5()
-    run_experiment_6()
-    # run_experiment_7_unconditional()
-    # run_experiment_7_conditional()
+    # run_experiment_5()
+    # run_experiment_6()
+    run_experiment_7_unconditional()
+    run_experiment_7_conditional()
 
