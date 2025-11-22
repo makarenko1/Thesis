@@ -957,7 +957,7 @@ def run_experiment_4_unconditional(
                 tvd_proxy = ProxyMutualInformationTVD(data=df)
                 sum_tvd[crit_label] += float(tvd_proxy.calculate([crit_uncond], epsilon=epsilon))
 
-                if path in ["data/census.csv", "data/stackoverflow.csv"]:
+                if path == "data/census.csv":
                     repair_proxy = ProxyRepairMaxSat(data=df_repair)
                 else:
                     repair_proxy = ProxyRepairMaxSat(data=df)
@@ -1088,7 +1088,7 @@ def run_experiment_4_unconditional(
     # 3 proxy measures + Regression unfairness (DP)
     crit_labels = [f"{ds} | {crit}" for ds, crit in table_all.index]
     x = np.arange(len(table_all))
-    width = 0.2
+    width = 0.18
 
     measure_cols = [
         ("ProxyMutualInformationTVD", ""),
@@ -1097,9 +1097,9 @@ def run_experiment_4_unconditional(
     ]
     fairness_col = ("Regression", "Unfairness (DP)")
 
-    fig, ax = plt.subplots(figsize=(max(10, len(table_all) * 0.4), 6))
+    # slightly smaller figure and fonts tuned down
+    fig, ax = plt.subplots(figsize=(max(8, len(table_all) * 0.25), 4))
 
-    # positions centered around x
     offsets = [-1.5 * width, -0.5 * width, 0.5 * width, 1.5 * width]
     labels = ["TVD", "RepairMaxSat", "TupleContribution", "Regression (DP)"]
 
@@ -1108,11 +1108,15 @@ def run_experiment_4_unconditional(
         ax.bar(x + offsets[i], vals, width, label=labels[i])
 
     ax.set_xticks(x)
-    ax.set_xticklabels(crit_labels, rotation=45, ha="right")
+    ax.set_xticklabels(crit_labels, rotation=45, ha="right", fontsize=7)
+
     ax.set_yscale('log')
-    ax.set_ylabel("Unfairness / Measure value (log scale)")
-    ax.set_title("Unconditional: Measures and Regression Demographic Parity per Criterion")
-    ax.legend()
+    ax.set_ylabel("Unfairness / Measure value (log scale)", fontsize=9)
+    ax.set_title("Unconditional: Measures and Regression Demographic Parity per Criterion", fontsize=10)
+
+    ax.tick_params(axis='y', labelsize=8)
+    ax.legend(fontsize=8)
+
     plt.tight_layout()
 
     png_outfile = os.path.splitext(outfile)[0] + ".png"
@@ -1287,7 +1291,7 @@ def run_experiment_4_conditional(
                 tvd_proxy = ProxyMutualInformationTVD(data=df)
                 sum_tvd[crit_label] += float(tvd_proxy.calculate([criterion], epsilon=epsilon))
 
-                if path == "data/census.csv" or path == "data/stackoverflow.csv":
+                if path == "data/census.csv":
                     repair_proxy = ProxyRepairMaxSat(data=df_repair)
                 else:
                     repair_proxy = ProxyRepairMaxSat(data=df)
@@ -1420,7 +1424,7 @@ def run_experiment_4_conditional(
     # 3 proxy measures + Regression unfairness (CSP)
     crit_labels = [f"{ds} | {crit}" for ds, crit in table_all.index]
     x = np.arange(len(table_all))
-    width = 0.2
+    width = 0.18
 
     measure_cols = [
         ("ProxyMutualInformationTVD", ""),
@@ -1429,7 +1433,7 @@ def run_experiment_4_conditional(
     ]
     fairness_col = ("Regression", "Unfairness (CSP)")
 
-    fig, ax = plt.subplots(figsize=(max(10, len(table_all) * 0.4), 6))
+    fig, ax = plt.subplots(figsize=(max(8, len(table_all) * 0.25), 4))
 
     offsets = [-1.5 * width, -0.5 * width, 0.5 * width, 1.5 * width]
     labels = ["TVD", "RepairMaxSat", "TupleContribution", "Regression (CSP)"]
@@ -1439,10 +1443,14 @@ def run_experiment_4_conditional(
         ax.bar(x + offsets[i], vals, width, label=labels[i])
 
     ax.set_xticks(x)
-    ax.set_xticklabels(crit_labels, rotation=45, ha="right")
-    ax.set_ylabel("Unfairness / Measure value (log scale)")
-    ax.set_title("Conditional: Measures and Regression CSP per Criterion")
-    ax.legend()
+    ax.set_xticklabels(crit_labels, rotation=45, ha="right", fontsize=7)
+
+    ax.set_ylabel("Unfairness / Measure value (log scale)", fontsize=9)
+    ax.set_title("Conditional: Measures and Regression CSP per Criterion", fontsize=10)
+
+    ax.tick_params(axis='y', labelsize=8)
+    ax.legend(fontsize=8)
+
     plt.tight_layout()
 
     png_outfile = os.path.splitext(outfile)[0] + ".png"
@@ -1473,5 +1481,5 @@ if __name__ == "__main__":
     run_experiment_1()
     run_experiment_2()
     run_experiment_3()
-    # run_experiment_4_unconditional()
-    # run_experiment_4_conditional()
+    run_experiment_4_unconditional()
+    run_experiment_4_conditional()
