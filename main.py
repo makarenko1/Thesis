@@ -808,7 +808,414 @@ def run_experiment_3(
     plt.show()
 
 
-def run_experiment_4_unconditional(
+def run_experiment_4(
+        epsilon: float = 1.0,
+        num_tuples: int = 100000,
+        repetitions: int = 5,
+        outfile: str = "plots/experiment4.png",
+):
+    """
+    For each dataset: histogram with X = fairness criteria, Y = value.
+    For each criterion, show two bars: MutualInformation and its proxy
+    ProxyMutualInformationTVD, averaged over `repetitions`.
+    """
+
+    plt.rcParams.update({
+        "axes.titlesize": 34,
+        "axes.labelsize": 30,
+        "xtick.labelsize": 24,
+        "ytick.labelsize": 24,
+        "figure.titlesize": 34,
+    })
+
+    fig, axes = plt.subplots(1, 5, figsize=(30, 6), sharey=False)
+    if not isinstance(axes, np.ndarray):
+        axes = np.array([axes])
+
+    # Loop over datasets (assumes `datasets` and `_encode_and_clean` are defined globally)
+    for ax, (ds_name, spec) in zip(axes, datasets.items()):
+        path = spec["path"]
+        criteria = spec["criteria"]
+
+        # Collect all needed columns once for this dataset
+        cols_list = []
+        for criterion in criteria:
+            cols_list += criterion
+        cols_list = list(dict.fromkeys(cols_list))  # dedupe
+
+        # Preprocess data and subsample
+        df = _encode_and_clean(path, cols_list)
+        n = min(num_tuples, len(df))
+        if n < len(df):
+            df = df.sample(n=n, replace=False, random_state=0)
+
+        # Per-criterion accumulators: sums over repetitions
+        mi_sums = {}
+        tvd_sums = {}
+        mi_counts = {}
+        tvd_counts = {}
+
+        for criterion in criteria:
+            # Normalize criterion label for plotting
+            if len(criterion) == 3:
+                protected, response, admissible = criterion
+                crit_label = f"{protected} , {response} | {admissible}"
+            else:
+                protected, response = criterion[0], criterion[1]
+                crit_label = f"{protected} , {response}"
+
+            mi_sums[crit_label] = 0.0
+            tvd_sums[crit_label] = 0.0
+            mi_counts[crit_label] = 0
+            tvd_counts[crit_label] = 0
+
+        # Repeat experiment to average over randomness / DP noise
+        for _ in range(repetitions):
+            # Use the same df but re-instantiate measures each repetition
+            mi_measure = MutualInformation(data=df)
+            tvd_measure = ProxyMutualInformationTVD(data=df)
+
+            for criterion in criteria:
+                if len(criterion) == 3:
+                    protected, response, admissible = criterion
+                    crit_label = f"{protected} , {response} | {admissible}"
+                else:
+                    protected, response = criterion[0], criterion[1]
+                    crit_label = f"{protected} , {response}"
+
+                # MutualInformation
+                with ThreadPoolExecutor() as executor:
+                    try:
+                        mi_val = executor.submit(
+                            mi_measure.calculate, [criterion], epsilon=epsilon
+                        ).result(timeout=timeout_seconds)
+                        mi_sums[crit_label] += float(mi_val)
+                        mi_counts[crit_label] += 1
+                    except TimeoutError:
+                        print(f"Skipping the iteration due to timeout.")
+                        # skip this repetition for that criterion
+
+                # ProxyMutualInformationTVD
+                with ThreadPoolExecutor() as executor:
+                    try:
+                        tvd_val = executor.submit(
+                            tvd_measure.calculate, [criterion], epsilon=epsilon
+                        ).result(timeout=timeout_seconds)
+                        tvd_sums[crit_label] += float(tvd_val)
+                        tvd_counts[crit_label] += 1
+                    except TimeoutError:
+                        print(f"Skipping the iteration due to timeout.")
+                        # skip this repetition for that criterion
+
+        # Build arrays for plotting (mean over repetitions)
+        crit_labels = sorted(mi_sums.keys())
+        x = np.arange(len(crit_labels), dtype=float)
+        width = 0.35
+
+        mi_vals = []
+        tvd_vals = []
+        for cl in crit_labels:
+            mi_mean = mi_sums[cl] / mi_counts[cl] if mi_counts[cl] > 0 else np.nan
+            tvd_mean = tvd_sums[cl] / tvd_counts[cl] if tvd_counts[cl] > 0 else np.nan
+            mi_vals.append(mi_mean)
+            tvd_vals.append(tvd_mean)
+
+        mi_vals = np.array(mi_vals, dtype=float)
+        tvd_vals = np.array(tvd_vals, dtype=float)
+
+        # Plot grouped bars
+        ax.bar(x - width / 2, mi_vals, width, label="MutualInformation")
+        ax.bar(x + width / 2, tvd_vals, width, label="ProxyMutualInformationTVD")
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(crit_labels, rotation=45, ha="right")
+        ax.set_ylabel("Value")
+        ax.set_title(ds_name)
+        ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+    fig.suptitle(f"Comparison of MutualInformation and ProxyMutualInformationTVD as Functions of Number of Tuples, "
+                 f"ε = {epsilon}",
+                 y=1.03)
+    fig.tight_layout()
+
+    import os
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
+    plt.savefig(outfile, dpi=256, bbox_inches="tight")
+    plt.show()
+
+
+def run_experiment_5(
+    ks=(10, 50, 100, 200, 500, 1000),
+    num_tuples=100000,
+    repetitions=5,
+    epsilon=1.0,
+    outfile="plots/experiment5.png",
+):
+    """Plot TupleContribution runtime over `repetitions` per dataset while keeping #tuples constant and increasing
+    the k."""
+
+    # Font sizes similar to your other experiments
+    plt.rcParams.update({
+        "axes.titlesize": 34,
+        "axes.labelsize": 30,
+        "xtick.labelsize": 24,
+        "ytick.labelsize": 24,
+        "figure.titlesize": 34,
+    })
+
+    fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
+    if not isinstance(axes, np.ndarray):
+        axes = np.array([axes])
+
+    rng = np.random.RandomState()
+
+    for ax, (ds_name, spec) in zip(axes, datasets.items()):
+        path = spec["path"]
+        criteria = spec["criteria"]
+
+        # Collect all columns used by any criterion for this dataset
+        cols_list = []
+        for criterion in criteria:
+            cols_list += criterion
+        # deduplicate while preserving order
+        cols_list = list(dict.fromkeys(cols_list))
+
+        # Encode and clean once per dataset
+        data = _encode_and_clean(path, cols_list)
+        n = min(num_tuples, len(data))
+        sample = data.sample(n=n, replace=False,
+                             random_state=rng.randint(0, 1_000_000))
+
+        # Stats for TupleContribution runtimes per k
+        stats = {"mean": [], "min": [], "max": []}
+
+        # One TupleContribution instance on the sampled data
+        m = TupleContribution(data=sample)
+
+        flag_timeout = False
+        for k in ks:
+            if flag_timeout:
+                # If we already timed out for a smaller k, fill with NaNs
+                print(f"Skipping the iteration due to timeout.")
+                stats["mean"].append(np.nan)
+                stats["min"].append(np.nan)
+                stats["max"].append(np.nan)
+                continue
+
+            runtimes_rep = []
+            for _ in range(repetitions):
+                start_time = time.time()
+                with ThreadPoolExecutor() as executor:
+                    try:
+                        _ = executor.submit(
+                            m.calculate,
+                            criteria,   # fixed set of criteria
+                            k=k,
+                            epsilon=epsilon
+                        ).result(timeout=timeout_seconds)
+                        elapsed_time = time.time() - start_time
+                        runtimes_rep.append(elapsed_time)
+                    except TimeoutError:
+                        print(f"Skipping the iteration due to timeout.")
+                        runtimes_rep.append(np.nan)
+                        flag_timeout = True
+                        break
+
+            vals = np.array(runtimes_rep, dtype=float)
+            vals = vals[~np.isnan(vals)]
+            if vals.size == 0:
+                mean_v = min_v = max_v = np.nan
+            else:
+                mean_v = vals.mean()
+                min_v = vals.min()
+                max_v = vals.max()
+
+            stats["mean"].append(mean_v)
+            stats["min"].append(min_v)
+            stats["max"].append(max_v)
+
+        # ---- Plotting for this dataset ----
+        xs = np.arange(len(ks))
+        tick_labels = [str(k) for k in ks]
+
+        ax.set_xticks(xs)
+        ax.set_xticklabels(tick_labels)
+
+        means = np.array(stats["mean"])
+        lows  = np.array(stats["min"])
+        highs = np.array(stats["max"])
+
+        # main line
+        line, = ax.plot(xs, means, marker="o", linewidth=2,
+                        label="TupleContribution runtime")
+
+        # shadow band = min/max across repetitions
+        mask = ~np.isnan(means) & ~np.isnan(lows) & ~np.isnan(highs)
+        if mask.any():
+            ax.fill_between(
+                xs[mask],
+                lows[mask],
+                highs[mask],
+                alpha=0.2,
+                color=line.get_color(),
+                linewidth=0,
+            )
+
+        ax.set_xlabel("k (top-k tuples)")
+        ax.set_yscale('log')
+        ax.set_title(ds_name)
+        ax.grid(True, linestyle="--", alpha=0.4)
+
+    axes[0].set_ylabel("runtime (s), log scale")
+    fig.suptitle(
+        f"Runtime of TupleContribution as Function of k, at most {round(num_tuples / 1000)}K tuples, ε = {epsilon}",
+        y=1.02,
+    )
+    fig.tight_layout()
+
+    import os
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
+    plt.savefig(outfile, dpi=256, bbox_inches="tight")
+    plt.show()
+
+
+def run_experiment_6(
+    ks=(10, 50, 100, 200, 500, 1000),
+    num_tuples=100000,
+    repetitions=5,
+    epsilon=1.0,
+    outfile="plots/experiment5.png",
+):
+    """Plot average relative L1 error of TupleContribution over `repetitions` per dataset, while keeping #tuples
+    constant and increasing the k."""
+
+    def _rel_error(x, y, tiny=1e-100):
+        denom = max(abs(y), tiny)  # ensure we do not divide by 0
+        return abs(x - y) / denom
+
+    # Font sizes similar to your other experiments
+    plt.rcParams.update({
+        "axes.titlesize": 34,
+        "axes.labelsize": 30,
+        "xtick.labelsize": 24,
+        "ytick.labelsize": 24,
+        "figure.titlesize": 34,
+    })
+
+    fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
+    if not isinstance(axes, np.ndarray):
+        axes = np.array([axes])
+
+    rng = np.random.RandomState()
+
+    for ax, (ds_name, spec) in zip(axes, datasets.items()):
+        path = spec["path"]
+        criteria = spec["criteria"]
+
+        # Collect all columns used by any criterion for this dataset
+        cols_list = []
+        for criterion in criteria:
+            cols_list += criterion
+        cols_list = list(dict.fromkeys(cols_list))  # deduplicate while preserving order
+
+        # Encode and clean once per dataset
+        data = _encode_and_clean(path, cols_list)
+        n = min(num_tuples, len(data))
+        sample = data.sample(n=n, replace=False,
+                             random_state=rng.randint(0, 1_000_000))
+
+        # We store mean/min/max L1 errors for each k
+        stats = {"mean": [], "min": [], "max": []}
+
+        # One TupleContribution instance on the sampled data
+        m = TupleContribution(data=sample)
+
+        for k in ks:
+            # --- Non-private baseline for this k ---
+            with ThreadPoolExecutor() as executor:
+                try:
+                    non_private_result = executor.submit(
+                        m.calculate,
+                        criteria,          # use all fairness criteria as in other experiments
+                        k=k,
+                        epsilon=None
+                    ).result(timeout=timeout_seconds)
+                except TimeoutError:
+                    print(f"Skipping the iteration due to timeout.")
+                    stats["mean"].append(np.nan)
+                    stats["min"].append(np.nan)
+                    stats["max"].append(np.nan)
+                    continue
+
+            # --- DP runs for this k ---
+            errs = []
+            for _ in range(repetitions):
+                with ThreadPoolExecutor() as executor:
+                    try:
+                        private_result = executor.submit(
+                            m.calculate,
+                            criteria,
+                            k=k,
+                            epsilon=epsilon
+                        ).result(timeout=timeout_seconds)
+                        errs.append(_rel_error(private_result, non_private_result))
+                    except TimeoutError:
+                        print(f"Skipping the iteration due to timeout.")
+                        errs.append(np.nan)
+                        break
+
+            vals = np.array(errs, dtype=float)
+            vals = vals[~np.isnan(vals)]
+            if vals.size == 0:
+                mean_v = min_v = max_v = np.nan
+            else:
+                mean_v = vals.mean()
+                min_v = vals.min()
+                max_v = vals.max()
+
+            stats["mean"].append(mean_v)
+            stats["min"].append(min_v)
+            stats["max"].append(max_v)
+
+        # ---- Plotting for this dataset ----
+        x = np.array(ks, dtype=float)
+        means = np.array(stats["mean"])
+        lows  = np.array(stats["min"])
+        highs = np.array(stats["max"])
+
+        line, = ax.plot(x, means, marker="o", linewidth=2, label="TupleContribution L1 error")
+
+        mask = ~np.isnan(means) & ~np.isnan(lows) & ~np.isnan(highs)
+        if mask.any():
+            ax.fill_between(
+                x[mask],
+                lows[mask],
+                highs[mask],
+                alpha=0.2,
+                color=line.get_color(),
+                linewidth=0,
+            )
+
+        ax.set_xlabel("k (top-k tuples)")
+        ax.set_yscale('log')
+        ax.set_title(ds_name)
+        ax.grid(True, linestyle="--", alpha=0.4)
+
+    axes[0].set_ylabel("relative L1 error (log scale)")
+    fig.suptitle(
+        f"Relative L1 Error of TupleContribution as Function of k, at most {round(num_tuples / 1000)}K tuples, "
+        f"ε = {epsilon}",
+        y=1.02,
+    )
+    fig.tight_layout()
+
+    import os
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
+    plt.savefig(outfile, dpi=256, bbox_inches="tight")
+    plt.show()
+
+
+def run_experiment_7_unconditional(
         epsilon: float = 1.0,
         num_tuples: int = 100000,
         num_tuples_repair: int = 1000,
@@ -1140,7 +1547,7 @@ def run_experiment_4_unconditional(
     table_all.to_excel(outfile, merge_cells=True)
 
 
-def run_experiment_4_conditional(
+def run_experiment_7_conditional(
         epsilon: float = 1.0,
         num_tuples: int = 100000,
         num_tuples_repair: int = 1000,
@@ -1478,8 +1885,12 @@ if __name__ == "__main__":
     # create_plot_1()
     # create_plot_2()
     # plot_legend()
-    run_experiment_1()
-    run_experiment_2()
-    run_experiment_3()
-    run_experiment_4_unconditional()
-    run_experiment_4_conditional()
+    # run_experiment_1()
+    # run_experiment_2()
+    # run_experiment_3()
+    run_experiment_4()
+    run_experiment_5()
+    run_experiment_6()
+    # run_experiment_7_unconditional()
+    # run_experiment_7_conditional()
+
