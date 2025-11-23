@@ -1105,7 +1105,7 @@ def run_experiment_5(
 
     axes[0].set_ylabel("runtime (s), log scale")
     fig.suptitle(
-        f"Runtime of TupleContribution as Function of k, at most {round(num_tuples / 1000)}K tuples, ε = {epsilon}",
+        f"Runtime of TupleContribution as Function of k, at most {round(num_tuples / 1000)}K tuples",
         y=1.02,
     )
     fig.tight_layout()
@@ -1118,7 +1118,7 @@ def run_experiment_5(
 def run_experiment_6(
     num_tuples=100000,
     repetitions=5,
-    epsilon=None,
+    epsilon=1.0,
     outfile="plots/experiment6.png",
 ):
     """Plot average relative L1 error of TupleContribution over `repetitions` per dataset,
@@ -1348,14 +1348,14 @@ def run_experiment_7_unconditional(
         model.to(DEVICE)
         optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.0)
         loss_fn = nn.L1Loss()
-        privacy_engine = PrivacyEngine()
-        model, optimizer, train_loader = privacy_engine.make_private(
-            module=model,
-            optimizer=optimizer,
-            data_loader=train_loader,
-            noise_multiplier=noise_multiplier,
-            max_grad_norm=max_grad_norm,
-        )
+        # privacy_engine = PrivacyEngine()
+        # model, optimizer, train_loader = privacy_engine.make_private(
+        #     module=model,
+        #     optimizer=optimizer,
+        #     data_loader=train_loader,
+        #     noise_multiplier=noise_multiplier,
+        #     max_grad_norm=max_grad_norm,
+        # )
 
         model.train()
         for _ in range(epochs):
@@ -1452,18 +1452,13 @@ def run_experiment_7_unconditional(
                 except Exception:
                     stratify = None
 
-                X_train, X_test, y_train, y_test, y_real_train, y_real_test = train_test_split(
-                    X_full, y_full, y_real_full,
+                prot_full = df[protected].to_numpy()
+                X_train, X_test, y_train, y_test, y_real_train, y_real_test, prot_train, prot_test = train_test_split(
+                    X_full, y_full, y_real_full, prot_full,
                     test_size=TEST_SIZE,
                     stratify=stratify
                 )
-
-                # indices for fairness computation
-                idx_all = np.arange(len(X_full))
-                _, idx_test = train_test_split(
-                    idx_all, test_size=TEST_SIZE, stratify=stratify
-                )
-                prot_test = df[protected].iloc[idx_test].reset_index(drop=True)
+                prot_test = pd.Series(prot_test).reset_index(drop=True)
 
                 # to torch
                 train_ds, in_dim = _to_torch(X_train, y_train)
@@ -1622,7 +1617,7 @@ def run_experiment_7_conditional(
     DP_NOISE_MULT = 1.0        # Gaussian noise multiplier
     DP_MAX_GRAD_NORM = 1.0     # Per-sample clipping norm
     BATCH_SIZE = 300000        # we'll batch smaller if sample is smaller
-    EPOCHS = 5
+    EPOCHS = 20
     LR = 1e-2
     POS_THRESHOLD = 0.5        # for CSP thresholding of predictions
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -1792,23 +1787,19 @@ def run_experiment_7_conditional(
                 except Exception:
                     stratify = None
 
-                X_train, X_test, y_train, y_test, y_real_train, y_real_test = train_test_split(
-                    X_full, y_full, y_real_full,
+                prot_full = df[protected].to_numpy()
+                if admissible:
+                    adm_full = df[admissible].to_numpy()
+                else:
+                    adm_full = np.zeros(len(df), dtype=int)
+                (X_train, X_test, y_train, y_test,
+                 y_real_train, y_real_test,
+                 prot_train, prot_test,
+                 adm_train, adm_test) = train_test_split(
+                    X_full, y_full, y_real_full, prot_full, adm_full,
                     test_size=TEST_SIZE,
                     stratify=stratify
                 )
-
-                # indices for fairness computation
-                idx_all = np.arange(len(X_full))
-                _, idx_test = train_test_split(
-                    idx_all, test_size=TEST_SIZE, stratify=stratify
-                )
-                prot_test = df[protected].iloc[idx_test].reset_index(drop=True)
-                if admissible:
-                    adm_test = df[admissible].iloc[idx_test].reset_index(drop=True)
-                else:
-                    adm_test = pd.Series(np.zeros(len(idx_test), dtype=int))
-
                 # to torch
                 train_ds, in_dim = _to_torch(X_train, y_train)
                 effective_batch = min(BATCH_SIZE, len(train_ds))
@@ -1959,5 +1950,5 @@ if __name__ == "__main__":
     run_experiment_5()
     run_experiment_6()
     run_experiment_7_unconditional()
-    run_experiment_7_conditional()
+    # run_experiment_7_conditional()
 
