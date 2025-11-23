@@ -1270,12 +1270,200 @@ def run_experiment_6(
     plt.show()
 
 
-def run_experiment_7_unconditional(
+def run_experiment_7(
+    epsilon: float = 1.0,
+    num_tuples: int = 60000,
+    repetitions: int = 5,
+    outfile: str = "plots/experiment7.png",
+):
+    """
+    For the Stackoverflow dataset and each fairness criterion, this experiment tests
+    how the fairness measures and model unfairness respond to controlled degradation
+    of dependency between the protected and response attributes.
+    """
+    path = "data/stackoverflow.csv"
+
+    plt.rcParams.update({
+        "axes.titlesize": 34,
+        "axes.labelsize": 30,
+        "xtick.labelsize": 24,
+        "ytick.labelsize": 24,
+        "figure.titlesize": 34,
+    })
+
+    # ==== helper: fairness (CSP) ====
+    def _conditional_statistical_parity(y_hat, protected, admissible, threshold=0.5):
+        y_pos = (y_hat >= threshold).astype(int)
+        A_vals, A_counts = np.unique(admissible, return_counts=True)
+        n = len(admissible)
+        weighted_gaps = []
+        for a, c in zip(A_vals, A_counts):
+            mask_a = (admissible == a)
+            if mask_a.sum() == 0:
+                continue
+            rates = []
+            for s in np.unique(protected[mask_a]):
+                mask_sa = mask_a & (protected == s)
+                rates.append(y_pos[mask_sa].mean() if mask_sa.sum() > 0 else 0.0)
+            if len(rates) == 0:
+                continue
+            gap = float(np.max(rates) - np.min(rates))
+            weighted_gaps.append((c / n) * gap)
+        return float(np.sum(weighted_gaps)) if weighted_gaps else 0.0
+
+    # ==== helper: permutation ====
+    def permute_column(df, col, fraction, rng):
+        df = df.copy()
+        n = len(df)
+        num_swap = int(fraction * n)
+        if num_swap <= 0:
+            return df
+
+        idx_pos = rng.choice(n, size=num_swap, replace=False)
+        permuted_vals = df[col].iloc[idx_pos].sample(frac=1, random_state=rng).values
+        df.iloc[idx_pos, df.columns.get_loc(col)] = permuted_vals
+        return df
+
+    # ==== helper: torch ====
+    def _to_torch(X: np.ndarray, y: np.ndarray) -> tuple[TensorDataset, int]:
+        X_t = torch.tensor(X, dtype=torch.float32)
+        y_t = torch.tensor(y, dtype=torch.float32).reshape(-1, 1)
+        return TensorDataset(X_t, y_t), X_t.shape[1]
+
+    # ==== setup ====
+    fractions = np.linspace(0, 1, 6)[1:]  # [0.2, 0.4, 0.6, 0.8, 1.0]
+    rng = np.random.RandomState(42)
+
+    # measures to include (MutualInformation removed)
+    measure_classes = {
+        "ProxyMutualInformationTVD": ProxyMutualInformationTVD,
+        "ProxyRepairMaxSat": ProxyRepairMaxSat,
+        "TupleContribution": TupleContribution,
+    }
+
+    fig, axes = plt.subplots(
+        1, len(stackoverflow_criteria), figsize=(22, 5), sharey=False
+    )
+
+    # ==== per criterion ====
+    for ax, criterion in zip(axes, stackoverflow_criteria):
+        protected, response, admissible = criterion
+        cols = [protected, response, admissible]
+        df_full = _encode_and_clean(path, cols)
+        df_full = df_full.sample(
+            n=min(num_tuples, len(df_full)), random_state=rng
+        )
+
+        print(f"\nRunning on criterion: {criterion}")
+
+        results = {
+            key: {"mean": [], "min": [], "max": []}
+            for key in list(measure_classes.keys()) + ["CSP", "L1"]
+        }
+
+        # vary permutation intensity
+        for frac in fractions:
+            measure_vals = {key: [] for key in results.keys()}
+            for _ in range(repetitions):
+                df_perm = permute_column(df_full, response, frac, rng)
+
+                # --- compute measures ---
+                for name, cls in measure_classes.items():
+                    m = cls(data=df_perm)
+                    val = m.calculate([criterion], epsilon=epsilon)
+                    measure_vals[name].append(val)
+
+                # --- train model ---
+                X = df_perm[[protected, admissible]].to_numpy(dtype=float)
+                y = df_perm[response].to_numpy(dtype=float)
+                y = (y - y.min()) / (y.max() - y.min() + 1e-12)
+
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=0.3, random_state=rng
+                )
+
+                ds_train, in_dim = _to_torch(X_train, y_train)
+                loader = DataLoader(
+                    ds_train,
+                    batch_size=min(30000, len(ds_train)),
+                    shuffle=True,
+                )
+                lin = nn.Sequential(nn.Linear(in_dim, 1), nn.Sigmoid())
+                optimizer = torch.optim.SGD(lin.parameters(), lr=1e-2)
+                loss_fn = nn.L1Loss()
+                lin.train()
+                for _ in range(5):  # fewer epochs to keep fast
+                    for xb, yb in loader:
+                        optimizer.zero_grad()
+                        preds = lin(xb)
+                        loss = loss_fn(preds, yb)
+                        loss.backward()
+                        optimizer.step()
+
+                # --- evaluate ---
+                lin.eval()
+                with torch.no_grad():
+                    preds = lin(
+                        torch.tensor(X_test, dtype=torch.float32)
+                    ).numpy().reshape(-1)
+                mae = np.mean(np.abs(preds - y_test))
+                csp = _conditional_statistical_parity(
+                    preds, df_perm[protected], df_perm[admissible]
+                )
+                measure_vals["L1"].append(mae)
+                measure_vals["CSP"].append(csp)
+
+            # aggregate stats
+            for key in results.keys():
+                arr = np.array(measure_vals[key], dtype=float)
+                arr = arr[~np.isnan(arr)]
+                results[key]["mean"].append(arr.mean() if arr.size else np.nan)
+                results[key]["min"].append(arr.min() if arr.size else np.nan)
+                results[key]["max"].append(arr.max() if arr.size else np.nan)
+
+        # ==== plotting ====
+        for key, vals in results.items():
+            means = np.array(vals["mean"])
+            lows = np.array(vals["min"])
+            highs = np.array(vals["max"])
+            line, = ax.plot(
+                fractions, means, marker="o", linewidth=2, label=key
+            )
+            ax.fill_between(
+                fractions,
+                lows,
+                highs,
+                alpha=0.2,
+                color=line.get_color(),
+                linewidth=0,
+            )
+
+        ax.set_xlabel("Permutation fraction of response")
+        ax.set_title(f"{protected} , {response} | {admissible}")
+        ax.grid(True, linestyle="--", alpha=0.4)
+        ax.set_yscale("log")
+
+    axes[0].set_ylabel("Score / Unfairness (log scale)")
+    handles, labels = axes[-1].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", ncol=len(labels))
+    fig.suptitle(
+        "Sensitivity of Fairness Measures Scores and Model Unfairness "
+        "to Increasing Label Permutation"
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+    import os
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
+    plt.savefig(outfile, dpi=256, bbox_inches="tight")
+    plt.show()
+
+
+def run_experiment_8_unconditional(
         epsilon: Optional[float] = None,
         num_tuples: int = 100000,
         num_tuples_repair: int = 1000,
-        repetitions: int = 5,
-        outfile: str = "plots/experiment7_unconditional.xlsx",
+        repetitions: int = 1,
+        outfile: str = "plots/experiment8_unconditional.xlsx",
 ):
     import os
     import matplotlib.pyplot as plt
@@ -1284,7 +1472,7 @@ def run_experiment_7_unconditional(
     DP_NOISE_MULT = 1.0        # Gaussian noise multiplier
     DP_MAX_GRAD_NORM = 1.0     # Per-sample clipping norm
     BATCH_SIZE = 300000        # we'll batch smaller if sample is smaller
-    EPOCHS = 5
+    EPOCHS = 20
     LR = 1e-2
     POS_THRESHOLD = 0.5        # for thresholding predictions
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -1348,14 +1536,14 @@ def run_experiment_7_unconditional(
         model.to(DEVICE)
         optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.0)
         loss_fn = nn.L1Loss()
-        # privacy_engine = PrivacyEngine()
-        # model, optimizer, train_loader = privacy_engine.make_private(
-        #     module=model,
-        #     optimizer=optimizer,
-        #     data_loader=train_loader,
-        #     noise_multiplier=noise_multiplier,
-        #     max_grad_norm=max_grad_norm,
-        # )
+        privacy_engine = PrivacyEngine()
+        model, optimizer, train_loader = privacy_engine.make_private(
+            module=model,
+            optimizer=optimizer,
+            data_loader=train_loader,
+            noise_multiplier=noise_multiplier,
+            max_grad_norm=max_grad_norm,
+        )
 
         model.train()
         for _ in range(epochs):
@@ -1468,13 +1656,6 @@ def run_experiment_7_unconditional(
                     shuffle=True, drop_last=False
                 )
 
-                # helper to unscale predictions back to real units
-                def _unscale(pred_scaled: np.ndarray) -> np.ndarray:
-                    if y_max > y_min:
-                        return pred_scaled * (y_max - y_min) + y_min
-                    else:
-                        return np.full_like(pred_scaled, y_min)
-
                 # --- Regression (DPLinear) ---
                 lin = DPLinear(in_dim)
                 _train_dp_sgd(lin, train_loader)
@@ -1491,12 +1672,11 @@ def run_experiment_7_unconditional(
                 # --- Random Forest (DPMLP proxy) ---
                 mlp = DPMLP(in_dim)
                 _train_dp_sgd(mlp, train_loader)
-                yhat_mlp_scaled = _predict(mlp, X_test)
-                yhat_mlp_real = _unscale(yhat_mlp_scaled)
-                mae_mlp = float(np.mean(np.abs(yhat_mlp_real - y_real_test)))  # L1 vs REAL values
+                yhat_mlp = _predict(mlp, X_test)
+                mae_mlp = float(np.mean(np.abs(yhat_mlp - y_real_test)))  # L1 vs REAL values
 
                 dp_mlp = _demographic_parity(
-                    yhat_mlp_scaled,
+                    yhat_mlp,
                     prot_test,
                     threshold=POS_THRESHOLD
                 )
@@ -1603,12 +1783,12 @@ def run_experiment_7_unconditional(
     table_all.to_excel(outfile, merge_cells=True)
 
 
-def run_experiment_7_conditional(
+def run_experiment_8_conditional(
         epsilon: Optional[float] = None,
         num_tuples: int = 100000,
         num_tuples_repair: int = 1000,
         repetitions: int = 5,
-        outfile="plots/experiment7_conditional.xlsx"
+        outfile="plots/experiment8_conditional.xlsx"
 ):
     import os
     import matplotlib.pyplot as plt
@@ -1617,7 +1797,7 @@ def run_experiment_7_conditional(
     DP_NOISE_MULT = 1.0        # Gaussian noise multiplier
     DP_MAX_GRAD_NORM = 1.0     # Per-sample clipping norm
     BATCH_SIZE = 300000        # we'll batch smaller if sample is smaller
-    EPOCHS = 20
+    EPOCHS = 5
     LR = 1e-2
     POS_THRESHOLD = 0.5        # for CSP thresholding of predictions
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -1806,13 +1986,6 @@ def run_experiment_7_conditional(
                 train_loader = DataLoader(train_ds, batch_size=effective_batch,
                                           shuffle=True, drop_last=False)
 
-                # helper to unscale predictions back to real units
-                def _unscale(pred_scaled: np.ndarray) -> np.ndarray:
-                    if y_max > y_min:
-                        return pred_scaled * (y_max - y_min) + y_min
-                    else:
-                        return np.full_like(pred_scaled, y_min)
-
                 # --- Regression (DPLinear) ---
                 lin = DPLinear(in_dim)
                 _train_dp_sgd(lin, train_loader)
@@ -1829,11 +2002,10 @@ def run_experiment_7_conditional(
                 # --- Random Forest (DPMLP proxy) ---
                 mlp = DPMLP(in_dim)
                 _train_dp_sgd(mlp, train_loader)
-                yhat_mlp_scaled = _predict(mlp, X_test)
-                yhat_mlp_real = _unscale(yhat_mlp_scaled)
-                mae_mlp = float(np.mean(np.abs(yhat_mlp_real - y_real_test)))  # L1 vs REAL values
+                yhat_mlp = _predict(mlp, X_test)
+                mae_mlp = float(np.mean(np.abs(yhat_mlp - y_real_test)))  # L1 vs REAL values
                 csp_mlp = _conditional_statistical_parity(
-                    yhat_mlp_scaled,
+                    yhat_mlp,
                     prot_test,
                     adm_test,
                     threshold=POS_THRESHOLD
@@ -1947,8 +2119,9 @@ if __name__ == "__main__":
     # run_experiment_2()
     # run_experiment_3()
     # run_experiment_4()
-    run_experiment_5()
-    run_experiment_6()
-    run_experiment_7_unconditional()
-    # run_experiment_7_conditional()
+    # run_experiment_5()
+    # run_experiment_6()
+    run_experiment_7()
+    # run_experiment_8_unconditional()
+    # run_experiment_8_conditional()
 
