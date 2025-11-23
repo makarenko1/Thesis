@@ -1,7 +1,7 @@
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -960,7 +960,7 @@ def run_experiment_4(
 def run_experiment_5(
     num_tuples=100000,
     repetitions=5,
-    epsilon=1.0,
+    epsilon=None,
     outfile="plots/experiment5.png",
 ):
     """Plot TupleContribution runtime over `repetitions` per dataset while keeping #tuples constant
@@ -1118,7 +1118,7 @@ def run_experiment_5(
 def run_experiment_6(
     num_tuples=100000,
     repetitions=5,
-    epsilon=1.0,
+    epsilon=None,
     outfile="plots/experiment6.png",
 ):
     """Plot average relative L1 error of TupleContribution over `repetitions` per dataset,
@@ -1271,7 +1271,7 @@ def run_experiment_6(
 
 
 def run_experiment_7_unconditional(
-        epsilon: float = 1.0,
+        epsilon: Optional[float] = None,
         num_tuples: int = 100000,
         num_tuples_repair: int = 1000,
         repetitions: int = 5,
@@ -1484,8 +1484,7 @@ def run_experiment_7_unconditional(
                 lin = DPLinear(in_dim)
                 _train_dp_sgd(lin, train_loader)
                 yhat_lin_scaled = _predict(lin, X_test)
-                yhat_lin_real = _unscale(yhat_lin_scaled)
-                mae_lin = float(np.mean(np.abs(yhat_lin_real - y_real_test)))  # L1 vs REAL values
+                mae_lin = float(np.mean(np.abs(yhat_lin_scaled - y_test)))  # in [0,1]
 
                 dp_lin = _demographic_parity(
                     yhat_lin_scaled,
@@ -1610,7 +1609,7 @@ def run_experiment_7_unconditional(
 
 
 def run_experiment_7_conditional(
-        epsilon: float = 1.0,
+        epsilon: Optional[float] = None,
         num_tuples: int = 100000,
         num_tuples_repair: int = 1000,
         repetitions: int = 5,
@@ -1827,8 +1826,7 @@ def run_experiment_7_conditional(
                 lin = DPLinear(in_dim)
                 _train_dp_sgd(lin, train_loader)
                 yhat_lin_scaled = _predict(lin, X_test)
-                yhat_lin_real = _unscale(yhat_lin_scaled)
-                mae_lin = float(np.mean(np.abs(yhat_lin_real - y_real_test)))  # L1 vs REAL values
+                mae_lin = float(np.mean(np.abs(yhat_lin_scaled - y_test)))  # in [0,1]
                 csp_lin = _conditional_statistical_parity(
                     yhat_lin_scaled,
                     prot_test,
@@ -1958,8 +1956,8 @@ if __name__ == "__main__":
     # run_experiment_2()
     # run_experiment_3()
     # run_experiment_4()
-    # run_experiment_5()
-    # run_experiment_6()
+    run_experiment_5()
+    run_experiment_6()
     run_experiment_7_unconditional()
     run_experiment_7_conditional()
 
