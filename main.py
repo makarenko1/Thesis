@@ -150,11 +150,9 @@ def create_plot_1():
             ax.tick_params(axis='y', labelsize=TICK_FS)
             ax.set_ylim(row_min, row_max)
 
-            # NO zero line anywhere (PrivBayes orig can be negative; limits already handle it)
             if c == 0:
                 ax.set_ylabel(proxy_title, fontsize=ROWLAB_FS)
 
-    # No legend (colors are per-row and labeled by y-axis)
     plt.savefig("plots/plot1.png", dpi=220)
     plt.show()
 
@@ -437,7 +435,7 @@ def run_experiment_1(
         for criterion in criteria:
             cols_list += criterion
         data = _encode_and_clean(path, cols_list)
-        num_tupless = num_tupless_per_dataset[ds_name]
+        num_tuples_this_dataset = num_tupless_per_dataset[ds_name]
 
         # store mean / min / max per measure
         results = {
@@ -448,14 +446,14 @@ def run_experiment_1(
         for measure_name, measure_cls in measures.items():
             if measure_name == "Proxy RepairMaxSat" and path == "data/census.csv":  # this dataset timeouted whole
                 # no data -> all NaNs
-                for _ in num_tupless:
+                for _ in num_tuples_this_dataset:
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
                     results[measure_name]["max"].append(np.nan)
                 continue
 
             flag_timeout = False
-            for num_tuples in num_tupless:
+            for num_tuples in num_tuples_this_dataset:
                 if flag_timeout:
                     print("Skipping next iterations because got timeout for smaller number of tuples.")
                     results[measure_name]["mean"].append(np.nan)
@@ -495,19 +493,26 @@ def run_experiment_1(
                 results[measure_name]["max"].append(max_v)
 
         # numeric x for plotting + nice tick labels
-        xs = np.arange(len(num_tupless))
-        tick_labels = [
-            f"{num_tuples // 1000}K" if num_tuples % 1000 == 0 else str(num_tuples)
-            for num_tuples in num_tupless
-        ]
+        xs = np.arange(len(num_tuples_this_dataset))
+        tick_labels = []
+        for num_tuples in num_tuples_this_dataset:
+            if num_tuples >= 1_000_000:
+                # 1,000,000 -> "1M"
+                tick_labels.append(f"{num_tuples // 1_000_000}M")
+            elif num_tuples >= 1_000:
+                # 5,000 -> "5K"
+                tick_labels.append(f"{num_tuples // 1_000}K")
+            else:
+                # < 1,000 -> exact number
+                tick_labels.append(str(num_tuples))
 
         # ↓↓↓ reduce xtick labels specifically for IPUMS-CPS ↓↓↓
         if ds_name == "IPUMS-CPS":
             # e.g. show only indices 0, 2, 4, 6 (for 7 points)
-            if len(num_tupless) >= 7:
+            if len(num_tuples_this_dataset) >= 7:
                 show_idx = [0, 2, 4, 6]
             else:
-                show_idx = list(range(len(num_tupless)))
+                show_idx = list(range(len(num_tuples_this_dataset)))
             ax.set_xticks(np.array(show_idx))
             ax.set_xticklabels([tick_labels[i] for i in show_idx])
         else:
@@ -683,7 +688,7 @@ def run_experiment_2(
 def run_experiment_3(
     epsilons=(0.1, 1, 5, 10),
     num_tuples=100000,
-    repetitions=5,
+    repetitions=10,
     outfile="plots/experiment3.png"
 ):
     """Plot relative L1 error vs epsilon, averaging over `repetitions`
@@ -727,7 +732,7 @@ def run_experiment_3(
             m = measure_cls(data=sample)
 
             # skip RepairMaxSat on huge datasets (as before)
-            if measure_name == "Proxy RepairMaxSat" and path == "data/census.csv":  # this dataset timeouted
+            if measure_name == "Proxy RepairMaxSat" and path == "data/census.csv":
                 for _ in epsilons:
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
@@ -798,6 +803,8 @@ def run_experiment_3(
                     linewidth=0,
                 )
 
+        ax.set_xticks(x)
+        ax.set_xticklabels([str(eps) for eps in epsilons])
         ax.set_xlabel("privacy budget ε")
         ax.set_yscale('log')
         ax.set_title(ds_name)
@@ -817,13 +824,13 @@ def run_experiment_3(
 
 
 def run_experiment_4(
-        epsilon: float = 1.0,
+        epsilon: float = None,
         num_tuples: int = 100000,
         repetitions: int = 5,
         outfile: str = "plots/experiment4.png",
 ):
     """
-    For each dataset: histogram with X = fairness criteria, Y = value.
+    For each dataset: histogram with X = fairness criteria (indexed 1..k), Y = value.
     For each criterion, show two bars: MutualInformation and its proxy
     ProxyMutualInformationTVD, averaged over `repetitions`.
     """
@@ -864,7 +871,7 @@ def run_experiment_4(
         tvd_counts = {}
 
         for criterion in criteria:
-            # Normalize criterion label for plotting
+            # Human-readable label (used only for internal ordering now)
             if len(criterion) == 3:
                 protected, response, admissible = criterion
                 crit_label = f"{protected} , {response} | {admissible}"
@@ -879,7 +886,6 @@ def run_experiment_4(
 
         # Repeat experiment to average over randomness / DP noise
         for _ in range(repetitions):
-            # Use the same df but re-instantiate measures each repetition
             mi_measure = MutualInformation(data=df)
             tvd_measure = ProxyMutualInformationTVD(data=df)
 
@@ -900,8 +906,7 @@ def run_experiment_4(
                         mi_sums[crit_label] += float(mi_val)
                         mi_counts[crit_label] += 1
                     except TimeoutError:
-                        print(f"Skipping the iteration due to timeout.")
-                        # skip this repetition for that criterion
+                        print("Skipping MutualInformation iteration due to timeout.")
 
                 # ProxyMutualInformationTVD
                 with ThreadPoolExecutor() as executor:
@@ -912,8 +917,7 @@ def run_experiment_4(
                         tvd_sums[crit_label] += float(tvd_val)
                         tvd_counts[crit_label] += 1
                     except TimeoutError:
-                        print(f"Skipping the iteration due to timeout.")
-                        # skip this repetition for that criterion
+                        print("Skipping TVD iteration due to timeout.")
 
         # Build arrays for plotting (mean over repetitions)
         crit_labels = sorted(mi_sums.keys())
@@ -932,19 +936,34 @@ def run_experiment_4(
         tvd_vals = np.array(tvd_vals, dtype=float)
 
         # Plot grouped bars
-        ax.bar(x - width / 2, mi_vals, width, label="MutualInformation")
+        mi_bars = ax.bar(x - width / 2, mi_vals, width, label="MutualInformation")
         ax.bar(x + width / 2, tvd_vals, width, label="ProxyMutualInformationTVD")
 
+        # X-ticks as 1,2,3,... instead of criterion strings
         ax.set_xticks(x)
-        ax.set_xticklabels(crit_labels, rotation=45, ha="right")
+        ax.set_xticklabels([str(i) for i in range(1, len(crit_labels) + 1)])
+
+        # Write values on top of MutualInformation bars only
+        for rect, val in zip(mi_bars, mi_vals):
+            if not np.isnan(val):
+                height = rect.get_height()
+                ax.text(
+                    rect.get_x() + rect.get_width() / 2.0,
+                    height,
+                    f"{val:.2f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=18,
+                )
+
         ax.set_title(ds_name)
         ax.grid(axis="y", linestyle="--", alpha=0.3)
 
-    axes[0].set_ylabel("measure value")
-
-    fig.suptitle(f"Comparison of MutualInformation and ProxyMutualInformationTVD, at most "
-                 f"{round(num_tuples / 1000)}K tuples, ε = {epsilon}",
-                 y=1.03)
+    fig.suptitle(
+        f"Comparison of MutualInformation and ProxyMutualInformationTVD, at most "
+        f"{round(num_tuples / 1000)}K tuples",
+        y=1.03,
+    )
     fig.tight_layout()
 
     import os
@@ -955,24 +974,24 @@ def run_experiment_4(
 
 def run_experiment_5(
     num_tuples=100000,
-    repetitions=5,
+    repetitions=10,
     epsilon=None,
     outfile="plots/experiment5.png",
 ):
-    """Plot TupleContribution runtime over `repetitions` per dataset while keeping #tuples constant
+    """Plot TupleContribution value over `repetitions` per dataset while keeping #tuples constant
     and increasing k (using ks_per_dataset for each dataset)."""
 
     ks_per_dataset = {
-        "Adult": [1000, 5000, 10000, 15000, 30000],
-        "IPUMS-CPS": [5000, 10000, 50000, 100000, 300000, 600000, 1000000],
-        "Stackoverflow": [5000, 10000, 20000, 40000, 60000],
-        "Compas": [1000, 1500, 3000, 7000, 10000],
+        "Adult": [500, 1000, 5000, 10000, 15000, 30000],
+        "IPUMS-CPS": [1000, 5000, 10000, 50000, 100000, 300000, 600000, 1000000],
+        "Stackoverflow": [1000, 5000, 10000, 20000, 40000, 60000],
+        "Compas": [500, 1000, 1500, 3000, 7000, 10000],
         "Healthcare": [100, 200, 400, 700, 1000],
     }
 
     import os
     import matplotlib.pyplot as plt
-    from matplotlib.ticker import LogLocator  # <-- added
+    from matplotlib.ticker import LogLocator  # still used for Healthcare y-axis
 
     plt.rcParams.update({
         "axes.titlesize": 34,
@@ -987,13 +1006,14 @@ def run_experiment_5(
         axes = np.array([axes])
 
     rng = np.random.RandomState()
+    EPS = 1e-12  # to avoid issues with log(0)
 
     for ax, (ds_name, spec) in zip(axes, datasets.items()):
         path = spec["path"]
         criteria = spec["criteria"]
 
         # --- use dataset-specific ks ---
-        ks = ks_per_dataset[ds_name]
+        ks_this_dataset = ks_per_dataset[ds_name]
 
         # Collect all columns used by any criterion for this dataset
         cols_list = []
@@ -1004,17 +1024,20 @@ def run_experiment_5(
         # Encode and clean once per dataset
         data = _encode_and_clean(path, cols_list)
         n = min(num_tuples, len(data))
-        sample = data.sample(n=n, replace=False,
-                             random_state=rng.randint(0, 1_000_000))
+        sample = data.sample(
+            n=n,
+            replace=False,
+            random_state=rng.randint(0, 1_000_000),
+        )
 
-        # Stats for TupleContribution runtimes per k
+        # Stats for TupleContribution *values* per k
         stats = {"mean": [], "min": [], "max": []}
 
         # One TupleContribution instance on the sampled data
         m = TupleContribution(data=sample)
 
         flag_timeout = False
-        for k in ks:
+        for k in ks_this_dataset:
             if flag_timeout:
                 # If we already timed out for a smaller k, fill with NaNs
                 print("Skipping the iteration due to timeout.")
@@ -1023,26 +1046,24 @@ def run_experiment_5(
                 stats["max"].append(np.nan)
                 continue
 
-            runtimes_rep = []
+            values_rep = []
             for _ in range(repetitions):
-                start_time = time.time()
                 with ThreadPoolExecutor() as executor:
                     try:
-                        _ = executor.submit(
+                        val = executor.submit(
                             m.calculate,
                             criteria,   # fixed set of criteria
                             k=k,
-                            epsilon=epsilon
+                            epsilon=epsilon,
                         ).result(timeout=timeout_seconds)
-                        elapsed_time = time.time() - start_time
-                        runtimes_rep.append(elapsed_time)
+                        values_rep.append(float(val))
                     except TimeoutError:
                         print("Skipping the iteration due to timeout.")
-                        runtimes_rep.append(np.nan)
+                        values_rep.append(np.nan)
                         flag_timeout = True
                         break
 
-            vals = np.array(runtimes_rep, dtype=float)
+            vals = np.array(values_rep, dtype=float)
             vals = vals[~np.isnan(vals)]
             if vals.size == 0:
                 mean_v = min_v = max_v = np.nan
@@ -1056,14 +1077,19 @@ def run_experiment_5(
             stats["max"].append(max_v)
 
         # ---- Plotting for this dataset ----
-        xs = np.arange(len(ks))
-        means = np.array(stats["mean"])
-        lows  = np.array(stats["min"])
-        highs = np.array(stats["max"])
+        xs = np.arange(len(ks_this_dataset))
+        means = np.array(stats["mean"], dtype=float)
+        lows  = np.array(stats["min"], dtype=float)
+        highs = np.array(stats["max"], dtype=float)
+
+        # clip to avoid log(0)
+        means = np.clip(means, EPS, None)
+        lows  = np.clip(lows,  EPS, None)
+        highs = np.clip(highs, EPS, None)
 
         # main line
         line, = ax.plot(xs, means, marker="o", linewidth=2,
-                        label="TupleContribution runtime")
+                        label="TupleContribution value")
 
         # shadow band = min/max across repetitions
         mask = ~np.isnan(means) & ~np.isnan(lows) & ~np.isnan(highs)
@@ -1077,31 +1103,36 @@ def run_experiment_5(
                 linewidth=0,
             )
 
-        # tick labels (fewer for IPUMS-CPS)
-        full_tick_labels = [str(k) if k % 1000 != 0 else f"{k // 1000}K" for k in ks]
+        # tick labels (K/M formatting)
+        tick_labels = []
+        for k in ks_this_dataset:
+            if k >= 1_000_000:
+                tick_labels.append(f"{k // 1_000_000}M")
+            elif k >= 1_000:
+                tick_labels.append(f"{k // 1_000}K")
+            else:
+                tick_labels.append(str(k))
+
         if ds_name == "IPUMS-CPS":
-            show_idx = [0, 2, 4, 6] if len(ks) >= 7 else list(range(len(ks)))
+            show_idx = [0, 2, 4, 6] if len(ks_this_dataset) >= 7 else list(range(len(ks_this_dataset)))
             ax.set_xticks(np.array(show_idx))
-            ax.set_xticklabels([full_tick_labels[i] for i in show_idx])
+            ax.set_xticklabels([tick_labels[i] for i in show_idx])
         else:
             ax.set_xticks(xs)
-            ax.set_xticklabels(full_tick_labels)
+            ax.set_xticklabels(tick_labels)
 
         ax.set_xlabel("k (top-k tuples)")
         ax.set_yscale('log')
 
-        # ↓↓↓ FEWER **Y** TICKS FOR HEALTHCARE ↓↓↓
         if ds_name == "Healthcare":
-            # e.g. at most 3 major ticks on log scale
             ax.yaxis.set_major_locator(LogLocator(base=10.0, numticks=3))
-        # ↑↑↑
 
         ax.set_title(ds_name)
         ax.grid(True, linestyle="--", alpha=0.4)
 
-    axes[0].set_ylabel("runtime (s), log scale")
+    axes[0].set_ylabel("TupleContribution value (log scale)")
     fig.suptitle(
-        f"Runtime of TupleContribution as Function of k, at most {round(num_tuples / 1000)}K tuples",
+        f"TupleContribution value as function of k, at most {round(num_tuples / 1000)}K tuples",
         y=1.02,
     )
     fig.tight_layout()
@@ -1113,7 +1144,7 @@ def run_experiment_5(
 
 def run_experiment_6(
     num_tuples=100000,
-    repetitions=5,
+    repetitions=10,
     epsilon=1.0,
     outfile="plots/experiment6.png",
 ):
@@ -1121,10 +1152,10 @@ def run_experiment_6(
     while keeping #tuples constant and increasing k (using ks_per_dataset for each dataset)."""
 
     ks_per_dataset = {
-        "Adult": [1000, 5000, 10000, 15000, 30000],
-        "IPUMS-CPS": [5000, 10000, 50000, 100000, 300000, 600000, 1000000],
-        "Stackoverflow": [5000, 10000, 20000, 40000, 60000],
-        "Compas": [1000, 1500, 3000, 7000, 10000],
+        "Adult": [500, 1000, 5000, 10000, 15000, 30000],
+        "IPUMS-CPS": [1000, 5000, 10000, 50000, 100000, 300000, 600000, 1000000],
+        "Stackoverflow": [1000, 5000, 10000, 20000, 40000, 60000],
+        "Compas": [500, 1000, 1500, 3000, 7000, 10000],
         "Healthcare": [100, 200, 400, 700, 1000],
     }
 
@@ -1267,10 +1298,10 @@ def run_experiment_6(
 
 
 def run_experiment_7(
-    epsilon: Optional[float] = 1.0,
+    epsilon: Optional[float] = None,
     num_tuples: int = 1000,
     repetitions_model: int = 50,
-    repetitions_measures: int = 15,
+    repetitions_measures: int = 5,
     outfile: str = "plots/experiment7.png",
 ):
     """
@@ -1452,14 +1483,14 @@ def run_experiment_7(
                 optimizer = torch.optim.SGD(model.parameters(), lr=LR, momentum=0.0)
                 loss_fn = nn.BCEWithLogitsLoss()
 
-                privacy_engine = PrivacyEngine()
-                model, optimizer, train_loader = privacy_engine.make_private(
-                    module=model,
-                    optimizer=optimizer,
-                    data_loader=train_loader,
-                    noise_multiplier=DP_NOISE_MULT,
-                    max_grad_norm=DP_MAX_GRAD_NORM,
-                )
+                # privacy_engine = PrivacyEngine()
+                # model, optimizer, train_loader = privacy_engine.make_private(
+                #     module=model,
+                #     optimizer=optimizer,
+                #     data_loader=train_loader,
+                #     noise_multiplier=DP_NOISE_MULT,
+                #     max_grad_norm=DP_MAX_GRAD_NORM,
+                # )
 
                 model.train()
                 for _epoch in range(EPOCHS):
@@ -1501,8 +1532,7 @@ def run_experiment_7(
 
     axes[0].set_ylabel("measure / unfairness (log scale)")
     fig.suptitle(
-        f"Fairness Measures and DP-Trained Model Unfairness as Functions of Unfairness in Dataset, "
-        f"epsilon = {epsilon}"
+        f"Fairness Measures and DP-Trained Model Unfairness as Functions of Unfairness in Dataset"
     )
     fig.tight_layout(rect=[0, 0, 1, 0.9])
 
@@ -2363,13 +2393,13 @@ if __name__ == "__main__":
     # create_plot_1()
     # create_plot_2()
     # plot_legend()
-    # run_experiment_1()
-    # run_experiment_2()
-    # run_experiment_3()
-    # run_experiment_4()
-    # run_experiment_5()
-    # run_experiment_6()
-    run_experiment_7()
+    run_experiment_1()
+    run_experiment_2()
+    run_experiment_3()
+    run_experiment_4()
+    run_experiment_5()
+    run_experiment_6()
+    # run_experiment_7()
     # run_experiment_7_make_less_unfair()
     # run_experiment_8_unconditional()
     # run_experiment_8_conditional()
