@@ -1,16 +1,12 @@
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from typing import Tuple, Dict, Optional
+from typing import Optional
 
-import numpy as np
-import pandas as pd
 import torch
 from matplotlib import pyplot as plt
 from opacus import PrivacyEngine
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from sympy import Line2D
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -1271,24 +1267,264 @@ def run_experiment_6(
 
 
 def run_experiment_7(
-    epsilon: float = 1.0,
-    num_tuples: int = 60000,
-    repetitions: int = 5,
+    epsilon: Optional[float] = 1.0,
+    num_tuples: int = 1000,
+    repetitions_model: int = 50,
+    repetitions_measures: int = 15,
     outfile: str = "plots/experiment7.png",
 ):
     """
-    For the Stackoverflow dataset and each fairness criterion, this experiment tests
+    For each Healthcare fairness criterion, gradually increase dependency between protected and response
+    by forcing more rows to take the majority response within each protected group.
+    """
+    from opacus import PrivacyEngine
+
+    path = "data/healthcare.csv"
+
+    plt.rcParams.update(
+        {
+            "axes.titlesize": 21,
+            "axes.labelsize": 21,
+            "xtick.labelsize": 18,
+            "ytick.labelsize": 18,
+            "figure.titlesize": 26,
+        }
+    )
+
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    DP_NOISE_MULT = 1.0
+    DP_MAX_GRAD_NORM = 1.0
+    EPOCHS = 20
+    LR = 1e-3
+
+    class FairMLP(nn.Module):
+        def __init__(self, in_dim: int, hidden: int = 32):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(in_dim, hidden),
+                nn.ReLU(),
+                nn.Linear(hidden, 1),  # logits
+            )
+
+        def forward(self, x):
+            return self.net(x)  # raw logits
+
+    def _conditional_statistical_parity(y_hat_prob, protected, admissible):
+        A_vals, A_counts = np.unique(admissible, return_counts=True)
+        n = len(admissible)
+        weighted_gaps = []
+        for a, c in zip(A_vals, A_counts):
+            mask_a = (admissible == a)
+            if mask_a.sum() == 0:
+                continue
+            rates = []
+            for s in np.unique(protected[mask_a]):
+                mask_sa = mask_a & (protected == s)
+                rates.append(y_hat_prob[mask_sa].mean() if mask_sa.sum() > 0 else 0.0)
+            if len(rates) == 0:
+                continue
+            gap = float(np.max(rates) - np.min(rates))
+            weighted_gaps.append((c / n) * gap)
+        return float(np.sum(weighted_gaps)) if weighted_gaps else 0.0
+
+    def make_unfair(
+            df: pd.DataFrame,
+            protected: str,
+            response: str,
+            admissible: str,
+            frac: float,
+            rng
+    ) -> pd.DataFrame:
+        df = df.copy()
+        if frac <= 0.0 or len(df) == 0:
+            return df
+
+        # We operate separately for each admissible value
+        for a in df[admissible].unique():
+            mask_a = (df[admissible] == a)
+            idx_a = df.index[mask_a]
+            n_a = len(idx_a)
+            if n_a == 0:
+                continue
+
+            # How many rows in this stratum to modify
+            num_rows = int(frac * n_a)
+            if num_rows == 0:
+                continue
+
+            df_a = df.loc[idx_a]
+
+            # Privileged protected value within this A=a
+            group_means = df_a.groupby(protected)[response].mean()
+            priv_val = group_means.idxmax()
+
+            # Local min/max of the response in this stratum
+            y_min = df_a[response].min()
+            y_max = df_a[response].max()
+
+            # Pick subset of rows (within A=a) to modify
+            chosen_idx = rng.choice(idx_a, size=num_rows, replace=False)
+
+            # Among those, check who is privileged
+            is_priv = df.loc[chosen_idx, protected] == priv_val
+
+            # privileged rows → positive label
+            df.loc[chosen_idx[is_priv], response] = y_max
+            # non-privileged rows → negative label
+            df.loc[chosen_idx[~is_priv], response] = y_min
+
+        return df
+
+    def _to_torch(X: np.ndarray, y: np.ndarray) -> tuple[TensorDataset, int]:
+        X_t = torch.tensor(X, dtype=torch.float32)
+        y_t = torch.tensor(y, dtype=torch.float32).reshape(-1, 1)
+        return TensorDataset(X_t, y_t), X_t.shape[1]
+
+    fractions = np.linspace(0, 1, 11)[1:]  # 0.1, 0.2, ..., 1.0
+    rng = np.random.RandomState(42)
+    EPS = 1e-8
+
+    measure_classes = {
+        "ProxyMutualInformationTVD": ProxyMutualInformationTVD,
+        "ProxyRepairMaxSat": ProxyRepairMaxSat,
+        "TupleContribution": TupleContribution,
+    }
+
+    fig, axes = plt.subplots(1, len(healthcare_criteria), figsize=(22, 5), sharey=False)
+
+    for ax, criterion in zip(axes, healthcare_criteria):
+        protected, response, admissible = criterion
+        cols = [protected, response, admissible]
+
+        df_full = _encode_and_clean(path, cols)
+        df_full = df_full.sample(n=min(num_tuples, len(df_full)), random_state=rng)
+
+        print(f"\nRunning on criterion (Healthcare): {criterion}")
+        results = {
+            key: {"mean": []}
+            for key in list(measure_classes.keys()) + ["CSP"]
+        }
+
+        for frac in fractions:
+            df_dep = make_unfair(df_full, protected, response, frac, rng)
+            measure_vals = {key: [] for key in results.keys()}
+
+            # proxy measures
+            for _ in range(repetitions_measures):
+                for name, cls in measure_classes.items():
+                    m = cls(data=df_dep)
+                    val = m.calculate([criterion], epsilon=epsilon)
+                    measure_vals[name].append(float(val))
+
+            # DP-trained model CSP
+            for _ in range(repetitions_model):
+                X = df_dep[[protected, admissible]].to_numpy(dtype=float)
+                y = df_dep[response].to_numpy(dtype=float)
+                y = (y - y.min()) / (y.max() - y.min() + 1e-100)
+
+                prot = df_dep[protected].to_numpy()
+                adm = df_dep[admissible].to_numpy()
+
+                (X_train, X_test,
+                 y_train, y_test,
+                 prot_train, prot_test,
+                 adm_train, adm_test) = train_test_split(
+                    X, y, prot, adm,
+                    test_size=0.3,
+                    random_state=12345,  # fixed split
+                )
+
+                ds_train, in_dim = _to_torch(X_train, y_train)
+                train_loader = DataLoader(
+                    ds_train,
+                    batch_size=min(num_tuples, len(ds_train)),
+                    shuffle=True,
+                )
+
+                model = FairMLP(in_dim).to(DEVICE)
+
+                optimizer = torch.optim.SGD(model.parameters(), lr=LR, momentum=0.0)
+                loss_fn = nn.BCEWithLogitsLoss()
+
+                privacy_engine = PrivacyEngine()
+                model, optimizer, train_loader = privacy_engine.make_private(
+                    module=model,
+                    optimizer=optimizer,
+                    data_loader=train_loader,
+                    noise_multiplier=DP_NOISE_MULT,
+                    max_grad_norm=DP_MAX_GRAD_NORM,
+                )
+
+                model.train()
+                for _epoch in range(EPOCHS):
+                    for xb, yb in train_loader:
+                        xb = xb.to(DEVICE)
+                        yb = yb.to(DEVICE)
+                        optimizer.zero_grad()
+                        logits = model(xb).squeeze(1)  # [batch]
+                        loss = loss_fn(logits, yb.squeeze(1))
+                        loss.backward()
+                        optimizer.step()
+
+                model.eval()
+                with torch.no_grad():
+                    logits_test = model(
+                        torch.tensor(X_test, dtype=torch.float32, device=DEVICE)
+                    ).squeeze(1)
+                    probs_test = torch.sigmoid(logits_test).cpu().numpy()
+
+                csp = _conditional_statistical_parity(probs_test, prot_test, adm_test)
+                measure_vals["CSP"].append(csp)
+
+            # aggregate stats (means only)
+            for key in results.keys():
+                arr = np.array(measure_vals[key], dtype=float)
+                arr = arr[~np.isnan(arr)]
+                results[key]["mean"].append(arr.mean() if arr.size else np.nan)
+
+        # plot for this criterion
+        for key, vals in results.items():
+            means = np.array(vals["mean"], dtype=float)
+            means = np.clip(means, EPS, None)  # avoid log(0)
+            ax.plot(fractions, means, marker="o", linewidth=2, label=key)
+
+        ax.set_xlabel("fraction of rows")
+        ax.set_title(f"{protected} , {response} | {admissible}")
+        ax.grid(True, linestyle="--", alpha=0.4)
+        ax.set_yscale("log")
+
+    axes[0].set_ylabel("measure / unfairness (log scale)")
+    fig.suptitle(
+        f"Fairness Measures and DP-Trained Model Unfairness as Functions of Unfairness in Dataset, "
+        f"epsilon = {epsilon}"
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.9])
+
+    import os
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
+    plt.savefig(outfile, dpi=256, bbox_inches="tight")
+    plt.show()
+
+
+def run_experiment_7_make_less_unfair(
+    epsilon: Optional[float] = None,
+    num_tuples: int = 60000,
+    repetitions: int = 5,
+    outfile: str = "plots/experiment7_make_less_unfair.png",
+):
+    """
+    For the Census dataset and each fairness criterion, this experiment tests
     how the fairness measures and model unfairness respond to controlled degradation
     of dependency between the protected and response attributes.
     """
-    path = "data/stackoverflow.csv"
+    path = "data/census.csv"
 
     plt.rcParams.update({
-        "axes.titlesize": 34,
-        "axes.labelsize": 30,
-        "xtick.labelsize": 24,
-        "ytick.labelsize": 24,
-        "figure.titlesize": 34,
+        "axes.titlesize": 18,
+        "axes.labelsize": 18,
+        "xtick.labelsize": 16,
+        "ytick.labelsize": 16,
+        "figure.titlesize": 24,
     })
 
     # ==== helper: fairness (CSP) ====
@@ -1331,7 +1567,8 @@ def run_experiment_7(
         return TensorDataset(X_t, y_t), X_t.shape[1]
 
     # ==== setup ====
-    fractions = np.linspace(0, 1, 6)[1:]  # [0.2, 0.4, 0.6, 0.8, 1.0]
+    # more permutation levels: 0.1, 0.2, ..., 1.0
+    fractions = np.linspace(0, 1, 11)[1:]
     rng = np.random.RandomState(42)
 
     # measures to include (MutualInformation removed)
@@ -1342,11 +1579,11 @@ def run_experiment_7(
     }
 
     fig, axes = plt.subplots(
-        1, len(stackoverflow_criteria), figsize=(22, 5), sharey=False
+        1, len(census_criteria), figsize=(22, 5), sharey=False
     )
 
     # ==== per criterion ====
-    for ax, criterion in zip(axes, stackoverflow_criteria):
+    for ax, criterion in zip(axes, census_criteria):
         protected, response, admissible = criterion
         cols = [protected, response, admissible]
         df_full = _encode_and_clean(path, cols)
@@ -1357,7 +1594,7 @@ def run_experiment_7(
         print(f"\nRunning on criterion: {criterion}")
 
         results = {
-            key: {"mean": [], "min": [], "max": []}
+            key: {"mean": []}
             for key in list(measure_classes.keys()) + ["CSP", "L1"]
         }
 
@@ -1371,15 +1608,33 @@ def run_experiment_7(
                 for name, cls in measure_classes.items():
                     m = cls(data=df_perm)
                     val = m.calculate([criterion], epsilon=epsilon)
-                    measure_vals[name].append(val)
+                    measure_vals[name].append(float(val))
 
                 # --- train model ---
                 X = df_perm[[protected, admissible]].to_numpy(dtype=float)
                 y = df_perm[response].to_numpy(dtype=float)
-                y = (y - y.min()) / (y.max() - y.min() + 1e-12)
+                # scale y to [0,1]
+                y = (y - y.min()) / (y.max() - y.min() + 1e-100)
 
-                X_train, X_test, y_train, y_test = train_test_split(
-                    X, y, test_size=0.3, random_state=rng
+                prot = df_perm[protected].to_numpy()
+                adm = df_perm[admissible].to_numpy()
+
+                (
+                    X_train,
+                    X_test,
+                    y_train,
+                    y_test,
+                    prot_train,
+                    prot_test,
+                    adm_train,
+                    adm_test,
+                ) = train_test_split(
+                    X,
+                    y,
+                    prot,
+                    adm,
+                    test_size=0.3,
+                    random_state=rng.randint(0, 1_000_000),
                 )
 
                 ds_train, in_dim = _to_torch(X_train, y_train)
@@ -1392,11 +1647,11 @@ def run_experiment_7(
                 optimizer = torch.optim.SGD(lin.parameters(), lr=1e-2)
                 loss_fn = nn.L1Loss()
                 lin.train()
-                for _ in range(5):  # fewer epochs to keep fast
+                for _epoch in range(10):  # fewer epochs to keep fast
                     for xb, yb in loader:
                         optimizer.zero_grad()
                         preds = lin(xb)
-                        loss = loss_fn(preds, yb)
+                        loss = loss_fn(preds, yb)  # both [batch,1]
                         loss.backward()
                         optimizer.step()
 
@@ -1406,9 +1661,10 @@ def run_experiment_7(
                     preds = lin(
                         torch.tensor(X_test, dtype=torch.float32)
                     ).numpy().reshape(-1)
-                mae = np.mean(np.abs(preds - y_test))
+
+                mae = float(np.mean(np.abs(preds - y_test)))
                 csp = _conditional_statistical_parity(
-                    preds, df_perm[protected], df_perm[admissible]
+                    preds, prot_test, adm_test
                 )
                 measure_vals["L1"].append(mae)
                 measure_vals["CSP"].append(csp)
@@ -1418,24 +1674,12 @@ def run_experiment_7(
                 arr = np.array(measure_vals[key], dtype=float)
                 arr = arr[~np.isnan(arr)]
                 results[key]["mean"].append(arr.mean() if arr.size else np.nan)
-                results[key]["min"].append(arr.min() if arr.size else np.nan)
-                results[key]["max"].append(arr.max() if arr.size else np.nan)
 
-        # ==== plotting ====
+        # ==== plotting (no shadows) ====
         for key, vals in results.items():
             means = np.array(vals["mean"])
-            lows = np.array(vals["min"])
-            highs = np.array(vals["max"])
-            line, = ax.plot(
+            ax.plot(
                 fractions, means, marker="o", linewidth=2, label=key
-            )
-            ax.fill_between(
-                fractions,
-                lows,
-                highs,
-                alpha=0.2,
-                color=line.get_color(),
-                linewidth=0,
             )
 
         ax.set_xlabel("Permutation fraction of response")
@@ -1444,8 +1688,6 @@ def run_experiment_7(
         ax.set_yscale("log")
 
     axes[0].set_ylabel("Score / Unfairness (log scale)")
-    handles, labels = axes[-1].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=len(labels))
     fig.suptitle(
         "Sensitivity of Fairness Measures Scores and Model Unfairness "
         "to Increasing Label Permutation"
@@ -2122,6 +2364,7 @@ if __name__ == "__main__":
     # run_experiment_5()
     # run_experiment_6()
     run_experiment_7()
+    # run_experiment_7_make_less_unfair()
     # run_experiment_8_unconditional()
     # run_experiment_8_conditional()
 
