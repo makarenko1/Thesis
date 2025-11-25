@@ -5,6 +5,7 @@ from typing import Optional
 
 import torch
 from matplotlib import pyplot as plt
+from matplotlib.ticker import LogLocator
 from opacus import PrivacyEngine
 from sklearn.model_selection import train_test_split
 from torch import nn
@@ -402,11 +403,11 @@ def plot_legend(outfile="plots/legend_proxies.png"):
 
 def run_experiment_1(
     epsilon=None,
-    repetitions=5,
+    repetitions=10,
     outfile="plots/experiment1.png"
 ):
-    """Plotting average runtimes over 'repetitions' repetitions per measure and dataset while keeping criteria constant
-    for every dataset and increasing the number of tuples."""
+    """Plotting average runtimes over 'repetitions' repetitions per measure and dataset as function of
+    the number of tuples."""
     num_tupless_per_dataset = {
         "Adult": [1000, 5000, 10000, 15000, 30000],
         "IPUMS-CPS": [5000, 10000, 50000, 100000, 300000, 600000, 1000000],
@@ -558,11 +559,10 @@ def run_experiment_1(
 def run_experiment_2(
     epsilon=None,
     num_tuples=100000,
-    repetitions=5,
+    repetitions=10,
     outfile="plots/experiment2.png"
 ):
-    """Plot average runtimes over `repetitions` per measure and dataset
-    while keeping #tuples constant and increasing the number of criteria."""
+    """Plot average runtimes over `repetitions` per measure and dataset as function of the number of criteria."""
     plt.rcParams.update({
         "axes.titlesize": 34,
         "axes.labelsize": 30,
@@ -691,8 +691,7 @@ def run_experiment_3(
     repetitions=10,
     outfile="plots/experiment3.png"
 ):
-    """Plot relative L1 error as function of epsilon, averaging over `repetitions`
-    and showing min/max bands as shadows around each line."""
+    """Relative L1 error as function of epsilon."""
 
     def _rel_error(x, y, tiny=1e-100):
         denom = max(abs(y), tiny)  # ensure we do not divide by 0
@@ -978,26 +977,21 @@ def run_experiment_5(
     epsilon=None,
     outfile="plots/experiment5.png",
 ):
-    """Plot TupleContribution value over `repetitions` per dataset while keeping #tuples constant
-    and increasing k (using ks_per_dataset for each dataset)."""
+    """TupleContribution value as function of k, sampling separately for each repetition."""
 
     ks_per_dataset = {
-        "Adult": [500, 1000, 5000, 10000, 15000, 30000],
+        "Adult": [100, 500, 1000, 5000, 10000, 15000, 30000],
         "IPUMS-CPS": [1000, 5000, 10000, 50000, 100000, 300000, 600000, 1000000],
         "Stackoverflow": [1000, 5000, 10000, 20000, 40000, 60000],
-        "Compas": [500, 1000, 1500, 3000, 7000, 10000],
+        "Compas": [100, 500, 1000, 1500, 3000, 7000, 10000],
         "Healthcare": [100, 200, 400, 700, 1000],
     }
 
-    import os
-    import matplotlib.pyplot as plt
-    from matplotlib.ticker import LogLocator  # still used for Healthcare y-axis
-
     plt.rcParams.update({
         "axes.titlesize": 34,
-        "axes.labelsize": 30,
-        "xtick.labelsize": 24,
-        "ytick.labelsize": 24,
+        "axes.labelsize": 28,
+        "xtick.labelsize": 19,
+        "ytick.labelsize": 22,
         "figure.titlesize": 34,
     })
 
@@ -1012,34 +1006,21 @@ def run_experiment_5(
         path = spec["path"]
         criteria = spec["criteria"]
 
-        # --- use dataset-specific ks ---
         ks_this_dataset = ks_per_dataset[ds_name]
 
-        # Collect all columns used by any criterion for this dataset
+        # all columns needed for this dataset
         cols_list = []
         for criterion in criteria:
             cols_list += criterion
-        cols_list = list(dict.fromkeys(cols_list))  # deduplicate while preserving order
+        cols_list = list(dict.fromkeys(cols_list))
 
-        # Encode and clean once per dataset
         data = _encode_and_clean(path, cols_list)
-        n = min(num_tuples, len(data))
-        sample = data.sample(
-            n=n,
-            replace=False,
-            random_state=rng.randint(0, 1_000_000),
-        )
 
-        # Stats for TupleContribution *values* per k
         stats = {"mean": [], "min": [], "max": []}
-
-        # One TupleContribution instance on the sampled data
-        m = TupleContribution(data=sample)
 
         flag_timeout = False
         for k in ks_this_dataset:
             if flag_timeout:
-                # If we already timed out for a smaller k, fill with NaNs
                 print("Skipping the iteration due to timeout.")
                 stats["mean"].append(np.nan)
                 stats["min"].append(np.nan)
@@ -1048,11 +1029,19 @@ def run_experiment_5(
 
             values_rep = []
             for _ in range(repetitions):
+                n = min(num_tuples, len(data))
+                sample = data.sample(
+                    n=n,
+                    replace=False,
+                    random_state=rng.randint(0, 1_000_000),
+                )
+                m = TupleContribution(data=sample)
+
                 with ThreadPoolExecutor() as executor:
                     try:
                         val = executor.submit(
                             m.calculate,
-                            criteria,   # fixed set of criteria
+                            criteria,
                             k=k,
                             epsilon=epsilon,
                         ).result(timeout=timeout_seconds)
@@ -1076,7 +1065,6 @@ def run_experiment_5(
             stats["min"].append(min_v)
             stats["max"].append(max_v)
 
-        # ---- Plotting for this dataset ----
         xs = np.arange(len(ks_this_dataset))
         means = np.array(stats["mean"], dtype=float)
         lows  = np.array(stats["min"], dtype=float)
@@ -1087,11 +1075,9 @@ def run_experiment_5(
         lows  = np.clip(lows,  EPS, None)
         highs = np.clip(highs, EPS, None)
 
-        # main line
         line, = ax.plot(xs, means, marker="o", linewidth=2,
                         label="TupleContribution value")
 
-        # shadow band = min/max across repetitions
         mask = ~np.isnan(means) & ~np.isnan(lows) & ~np.isnan(highs)
         if mask.any():
             ax.fill_between(
@@ -1103,7 +1089,6 @@ def run_experiment_5(
                 linewidth=0,
             )
 
-        # tick labels (K/M formatting)
         tick_labels = []
         for k in ks_this_dataset:
             if k >= 1_000_000:
@@ -1130,13 +1115,14 @@ def run_experiment_5(
         ax.set_title(ds_name)
         ax.grid(True, linestyle="--", alpha=0.4)
 
-    axes[0].set_ylabel("TupleContribution value (log scale)")
+    axes[0].set_ylabel("TupleContribution (log scale)")
     fig.suptitle(
         f"TupleContribution value as function of k, at most {round(num_tuples / 1000)}K tuples",
         y=1.02,
     )
     fig.tight_layout()
 
+    import os
     os.makedirs(os.path.dirname(outfile), exist_ok=True)
     plt.savefig(outfile, dpi=256, bbox_inches="tight")
     plt.show()
@@ -1148,8 +1134,7 @@ def run_experiment_6(
     epsilon=1.0,
     outfile="plots/experiment6.png",
 ):
-    """Plot average relative L1 error of TupleContribution over `repetitions` per dataset,
-    while keeping #tuples constant and increasing k (using ks_per_dataset for each dataset)."""
+    """Relative L1 error of TupleContribution as function of k."""
 
     ks_per_dataset = {
         "Adult": [500, 1000, 5000, 10000, 15000, 30000],
@@ -2393,12 +2378,12 @@ if __name__ == "__main__":
     # create_plot_1()
     # create_plot_2()
     # plot_legend()
-    run_experiment_1()
-    run_experiment_2()
-    run_experiment_3()
-    run_experiment_4()
+    # run_experiment_1()
+    # run_experiment_2()
+    # run_experiment_3()
+    # run_experiment_4()
     run_experiment_5()
-    run_experiment_6()
+    # run_experiment_6()
     # run_experiment_7()
     # run_experiment_7_make_less_unfair()
     # run_experiment_8_unconditional()
