@@ -507,9 +507,7 @@ def run_experiment_1(
                 # < 1,000 -> exact number
                 tick_labels.append(str(num_tuples))
 
-        # ↓↓↓ reduce xtick labels specifically for IPUMS-CPS ↓↓↓
         if ds_name == "IPUMS-CPS":
-            # e.g. show only indices 0, 2, 4, 6 (for 7 points)
             if len(num_tuples_this_dataset) >= 7:
                 show_idx = [0, 2, 4, 6]
             else:
@@ -519,17 +517,13 @@ def run_experiment_1(
         else:
             ax.set_xticks(xs)
             ax.set_xticklabels(tick_labels)
-        # ↑↑↑ end IPUMS-CPS special-casing ↑↑↑
 
         for measure_name, stats in results.items():
             means = np.array(stats["mean"])
             lows  = np.array(stats["min"])
             highs = np.array(stats["max"])
 
-            # plot main line
             line, = ax.plot(xs, means, marker="o", linewidth=2, label=measure_name)
-
-            # shadow band = min/max across repetitions
             mask = ~np.isnan(means) & ~np.isnan(lows) & ~np.isnan(highs)
             if mask.any():
                 ax.fill_between(
