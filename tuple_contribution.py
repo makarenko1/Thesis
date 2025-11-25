@@ -1,5 +1,4 @@
 import time
-from collections import Counter
 
 import numpy as np
 import pandas as pd
@@ -101,53 +100,51 @@ class TupleContribution:
     def _calculate_unconditional_helper(protected_col_values, response_col_values):
         """
         Compute unsigned marginal differences for all observed (S,O) pairs:
-            MD(s,o) = |P(S,O) − P(S)P(O)|.
+            MD(s,o) = |P(S,O) − P(S)P(O)|
+        Returns MD values for unique tuples.
         """
-        s_arr = np.asarray(protected_col_values, dtype=np.int64)
-        o_arr = np.asarray(response_col_values, dtype=np.int64)
-        N = len(s_arr)
+        protected_col_values = np.asarray(protected_col_values, dtype=np.int64)
+        response_col_values = np.asarray(response_col_values, dtype=np.int64)
+        n_protected, n_response = protected_col_values.max() + 1, response_col_values.max() + 1
+        N = len(protected_col_values)
 
-        # joint counts C(s,o)
-        joint_counts = Counter(zip(s_arr, o_arr))
-        # marginals C(s), C(o)
-        s_counts = Counter(s_arr)
-        o_counts = Counter(o_arr)
+        flat = protected_col_values * n_response + response_col_values
+        C = np.bincount(flat, minlength=n_protected * n_response).reshape(n_protected, n_response).astype(float)# counts
+        p_protected_response = C / N
+        p_protected = p_protected_response.sum(axis=1, keepdims=True)  # [n_protected,1]
+        p_response = p_protected_response.sum(axis=0, keepdims=True)   # [1,n_response]
+        MD = np.abs(p_protected_response - p_protected @ p_response)   # MD matrix
 
-        MD_vals = []
-        for (s, o), c_so in joint_counts.items():
-            p_so = c_so / N
-            p_s = s_counts[s] / N
-            p_o = o_counts[o] / N
-            MD_vals.append(abs(p_so - p_s * p_o))
-
-        return np.array(MD_vals, dtype=float)
+        # Extract only cells that appear in the data to define tuples + multiplicities
+        protected_idx, response_idx = np.nonzero(C)  # multiplicity for each unique (s,o)
+        return MD[protected_idx, response_idx]
 
     @staticmethod
     def _calculate_conditional_helper(protected_col_values, response_col_values, admissible_col_values):
         """
         Compute unsigned marginal differences for all observed (S,O,A) tuples:
-            MD(s,o|a) = |P(S,O|A=a) − P(S|A=a)P(O|A=a)|.
+            MD(s,o|a) = |P(S,O|A) − P(S|A)P(O|A)|
+        Returns MD values for unique tuples.
         """
-        s_arr = np.asarray(protected_col_values, dtype=np.int64)
-        o_arr = np.asarray(response_col_values, dtype=np.int64)
-        a_arr = np.asarray(admissible_col_values, dtype=np.int64)
-        N = len(a_arr)
+        protected_col_values = np.asarray(protected_col_values, dtype=np.int64)
+        response_col_values = np.asarray(response_col_values, dtype=np.int64)
+        admissible_col_values = np.asarray(admissible_col_values, dtype=np.int64)
+        n_protected, n_response, n_admissible = (protected_col_values.max() + 1, response_col_values.max() + 1,
+                                                 admissible_col_values.max() + 1)
 
-        # counts over triples (a,s,o)
-        aso_counts = Counter(zip(a_arr, s_arr, o_arr))
-        # counts per admissible value a
-        a_counts = Counter(a_arr)
-        # counts per (a,s)
-        as_counts = Counter(zip(a_arr, s_arr))
-        # counts per (a,o)
-        ao_counts = Counter(zip(a_arr, o_arr))
+        flat = admissible_col_values * (n_protected * n_response) + protected_col_values * n_response + response_col_values
+        C = np.bincount(flat, minlength=n_admissible * n_protected * n_response).reshape(
+            n_admissible, n_protected, n_response).astype(float)  # counts per (a,s,o)
 
-        MD_vals = []
-        for (a, s, o), c_aso in aso_counts.items():
-            N_a = a_counts[a]  # total rows with this a
-            p_so = c_aso / N_a  # P(S=s,O=o | A=a)
-            p_s = as_counts[(a, s)] / N_a  # P(S=s | A=a)
-            p_o = ao_counts[(a, o)] / N_a  # P(O=o | A=a)
-            MD_vals.append(abs(p_so - p_s * p_o))
+        N_admissible = C.sum(axis=(1, 2))  # total per a
+        mask_a = N_admissible > 0
 
-        return np.array(MD_vals, dtype=float)
+        p_protected_response = np.zeros_like(C)
+        p_protected_response[mask_a] = C[mask_a] / N_admissible[mask_a, None, None]  # P(S,O|a)
+        p_protected = p_protected_response.sum(axis=2, keepdims=True)                # P(S|a)
+        p_response = p_protected_response.sum(axis=1, keepdims=True)                 # P(O|a)
+        MD = np.abs(p_protected_response - p_protected * p_response)                 # residuals per (a,s,o)
+
+        # Extract only observed cells to define tuples + multiplicities
+        admissible_idx, protected_idx, response_idx = np.nonzero(C)  # multiplicity for each unique (s,o,a)
+        return MD[admissible_idx, protected_idx, response_idx]
