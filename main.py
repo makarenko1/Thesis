@@ -1406,7 +1406,13 @@ def run_experiment_7(
         }
 
         for frac in fractions:
-            df_dep = make_unfair(df_full, protected, response, frac, rng)
+            df_dep = make_unfair(
+                df_full, protected=protected,
+                response=response,
+                admissible=admissible,
+                frac=frac,
+                rng=rng
+            )
             measure_vals = {key: [] for key in results.keys()}
 
             # proxy measures
