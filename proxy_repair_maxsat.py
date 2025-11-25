@@ -51,7 +51,7 @@ class ProxyRepairMaxSat:
         """
         start_time = time.time()
 
-        soft_clauses = set()
+        soft_clauses = []
         hard_clauses = set()
         D_star = set()
 
@@ -72,7 +72,7 @@ class ProxyRepairMaxSat:
 
             soft_clauses_for_criterion, hard_clauses_for_criterion, D_star_for_criterion = (
                 self._conversion_to_solving_general_3cnf(D_shortened, admissible_col))
-            soft_clauses = soft_clauses.union(soft_clauses_for_criterion)
+            soft_clauses += soft_clauses_for_criterion
             hard_clauses = hard_clauses.union(hard_clauses_for_criterion)
             D_star = D_star.union(D_star_for_criterion)
 
