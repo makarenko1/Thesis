@@ -1291,7 +1291,10 @@ def run_experiment_7(
 ):
     """
     For each Healthcare fairness criterion, gradually increase dependency between protected and response
-    by forcing more rows to take the majority response within each protected group.
+    by forcing more rows to take the majority response within each protected group (within each admissible stratum).
+
+    - The model is trained on the FULL encoded dataset (all columns except the response).
+    - The proxy measures are computed only on the projection to (protected, response, admissible).
     """
     from opacus import PrivacyEngine
 
@@ -1344,18 +1347,17 @@ def run_experiment_7(
         return float(np.sum(weighted_gaps)) if weighted_gaps else 0.0
 
     def make_unfair(
-            df: pd.DataFrame,
-            protected: str,
-            response: str,
-            admissible: str,
-            frac: float,
-            rng
+        df: pd.DataFrame,
+        protected: str,
+        response: str,
+        admissible: str,
+        frac: float,
+        rng,
     ) -> pd.DataFrame:
         df = df.copy()
         if frac <= 0.0 or len(df) == 0:
             return df
 
-        # We operate separately for each admissible value
         for a in df[admissible].unique():
             mask_a = (df[admissible] == a)
             idx_a = df.index[mask_a]
@@ -1363,25 +1365,19 @@ def run_experiment_7(
             if n_a == 0:
                 continue
 
-            # How many rows in this stratum to modify
             num_rows = int(frac * n_a)
             if num_rows == 0:
                 continue
 
             df_a = df.loc[idx_a]
 
-            # Privileged protected value within this A=a
             group_means = df_a.groupby(protected)[response].mean()
             priv_val = group_means.idxmax()
 
-            # Local min/max of the response in this stratum
             y_min = df_a[response].min()
             y_max = df_a[response].max()
 
-            # Pick subset of rows (within A=a) to modify
             chosen_idx = rng.choice(idx_a, size=num_rows, replace=False)
-
-            # Among those, check who is privileged
             is_priv = df.loc[chosen_idx, protected] == priv_val
 
             # privileged rows → positive label
@@ -1408,52 +1404,68 @@ def run_experiment_7(
 
     fig, axes = plt.subplots(1, len(healthcare_criteria), figsize=(22, 5), sharey=False)
 
+    raw_df = pd.read_csv(path)
+    all_cols = raw_df.columns.tolist()
+    df_all = _encode_and_clean(path, all_cols)
+    df_all = df_all.sample(n=min(num_tuples, len(df_all)), random_state=rng)
+
     for ax, criterion in zip(axes, healthcare_criteria):
         protected, response, admissible = criterion
-        cols = [protected, response, admissible]
-
-        df_full = _encode_and_clean(path, cols)
-        df_full = df_full.sample(n=min(num_tuples, len(df_full)), random_state=rng)
 
         print(f"\nRunning on criterion (Healthcare): {criterion}")
+
         results = {
             key: {"mean": []}
             for key in list(measure_classes.keys()) + ["CSP"]
         }
 
         for frac in fractions:
-            df_dep = make_unfair(
-                df_full, protected=protected,
+            df_dep_all = make_unfair(
+                df_all,
+                protected=protected,
                 response=response,
                 admissible=admissible,
                 frac=frac,
-                rng=rng
+                rng=rng,
             )
+
+            df_dep_proj = df_dep_all[[protected, response, admissible]].copy()
+
             measure_vals = {key: [] for key in results.keys()}
 
-            # proxy measures
             for _ in range(repetitions_measures):
                 for name, cls in measure_classes.items():
-                    m = cls(data=df_dep)
+                    m = cls(data=df_dep_proj)
                     val = m.calculate([criterion], epsilon=epsilon)
                     measure_vals[name].append(float(val))
 
-            # DP-trained model CSP
             for _ in range(repetitions_model):
-                X = df_dep[[protected, admissible]].to_numpy(dtype=float)
-                y = df_dep[response].to_numpy(dtype=float)
+                # Features: ALL columns except the response
+                X = df_dep_all.drop(columns=[response]).to_numpy(dtype=float)
+                y = df_dep_all[response].to_numpy(dtype=float)
+
+                # scale y to [0,1] (usual; in healthcare it should already be 0/1)
                 y = (y - y.min()) / (y.max() - y.min() + 1e-100)
 
-                prot = df_dep[protected].to_numpy()
-                adm = df_dep[admissible].to_numpy()
+                prot = df_dep_all[protected].to_numpy()
+                adm = df_dep_all[admissible].to_numpy()
 
-                (X_train, X_test,
-                 y_train, y_test,
-                 prot_train, prot_test,
-                 adm_train, adm_test) = train_test_split(
-                    X, y, prot, adm,
+                (
+                    X_train,
+                    X_test,
+                    y_train,
+                    y_test,
+                    prot_train,
+                    prot_test,
+                    adm_train,
+                    adm_test,
+                ) = train_test_split(
+                    X,
+                    y,
+                    prot,
+                    adm,
                     test_size=0.3,
-                    random_state=12345,  # fixed split
+                    random_state=12345,  # fixed split across repetitions
                 )
 
                 ds_train, in_dim = _to_torch(X_train, y_train)
@@ -1498,13 +1510,11 @@ def run_experiment_7(
                 csp = _conditional_statistical_parity(probs_test, prot_test, adm_test)
                 measure_vals["CSP"].append(csp)
 
-            # aggregate stats (means only)
             for key in results.keys():
                 arr = np.array(measure_vals[key], dtype=float)
                 arr = arr[~np.isnan(arr)]
                 results[key]["mean"].append(arr.mean() if arr.size else np.nan)
 
-        # plot for this criterion
         for key, vals in results.items():
             means = np.array(vals["mean"], dtype=float)
             means = np.clip(means, EPS, None)  # avoid log(0)
@@ -1517,7 +1527,7 @@ def run_experiment_7(
 
     axes[0].set_ylabel("measure / unfairness (log scale)")
     fig.suptitle(
-        f"Fairness Measures and DP-Trained Model Unfairness as Functions of Unfairness in Dataset"
+        "Fairness Measures and Model Unfairness as Functions of Unfairness in Dataset"
     )
     fig.tight_layout(rect=[0, 0, 1, 0.9])
 
@@ -2384,7 +2394,7 @@ if __name__ == "__main__":
     # run_experiment_4()
     # run_experiment_5()
     # run_experiment_6()
-    # run_experiment_7()
+    run_experiment_7()
     # run_experiment_7_make_less_unfair()
     # run_experiment_8_unconditional()
     # run_experiment_8_conditional()
