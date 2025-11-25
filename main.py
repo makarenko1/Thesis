@@ -691,7 +691,7 @@ def run_experiment_3(
     repetitions=10,
     outfile="plots/experiment3.png"
 ):
-    """Plot relative L1 error vs epsilon, averaging over `repetitions`
+    """Plot relative L1 error as function of epsilon, averaging over `repetitions`
     and showing min/max bands as shadows around each line."""
 
     def _rel_error(x, y, tiny=1e-100):
