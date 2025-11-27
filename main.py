@@ -7,6 +7,7 @@ import torch
 from matplotlib import pyplot as plt
 from matplotlib.ticker import LogLocator
 from opacus import PrivacyEngine
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -324,7 +325,7 @@ measures = {
 
 timeout_seconds = 2 * 60 * 60
 
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 import pandas as pd
 import numpy as np
 
@@ -1295,7 +1296,7 @@ def run_experiment_6(
 def run_experiment_7(
     epsilon: Optional[float] = None,
     num_tuples: int = 60000,
-    repetitions_model: int = 5,
+    repetitions_model: int = 20,
     repetitions_measures: int = 0,
     outfile: str = "plots/experiment7.png",
 ):
@@ -1894,47 +1895,13 @@ def run_experiment_7_make_less_unfair(
 
 def run_experiment_8_unconditional(
         epsilon: Optional[float] = None,
-        num_tuples: int = 100000,
-        num_tuples_repair: int = 1000,
+        num_tuples: int = 100000,   # kept for signature, not used
         repetitions: int = 1,
         outfile: str = "plots/experiment8_unconditional.xlsx",
 ):
-    import os
-    import matplotlib.pyplot as plt
 
-    # ==== DP-SGD / training params ====
-    DP_NOISE_MULT = 1.0        # Gaussian noise multiplier
-    DP_MAX_GRAD_NORM = 1.0     # Per-sample clipping norm
-    BATCH_SIZE = 300000        # we'll batch smaller if sample is smaller
-    EPOCHS = 20
-    LR = 1e-2
-    POS_THRESHOLD = 0.5        # for thresholding predictions
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
-    TEST_SIZE = 0.3
-
-    # ==== Models ====
-    class DPLinear(nn.Module):
-        """Regression model (DP-linear with sigmoid)."""
-        def __init__(self, in_dim: int):
-            super().__init__()
-            self.linear = nn.Linear(in_dim, 1)
-
-        def forward(self, x):
-            return torch.sigmoid(self.linear(x))  # keep outputs in [0,1]
-
-    class DPMLP(nn.Module):
-        """Random Forest proxy model (DP-MLP with sigmoid)."""
-        def __init__(self, in_dim: int, hidden: int = 64):
-            super().__init__()
-            self.net = nn.Sequential(
-                nn.Linear(in_dim, hidden),
-                nn.ReLU(),
-                nn.Linear(hidden, 1),
-            )
-
-        def forward(self, x):
-            return torch.sigmoid(self.net(x))     # keep outputs in [0,1]
+    POS_THRESHOLD = 0.5
+    TEST_SIZE = 0.15
 
     # ==== Fairness: Demographic Parity (unconditional) ====
     def _demographic_parity(y_hat: np.ndarray,
@@ -1955,189 +1922,100 @@ def run_experiment_8_unconditional(
             return 0.0
         return float(np.max(rates) - np.min(rates))
 
-    # ==== Torch helpers ====
-    def _to_torch(X: np.ndarray, y: np.ndarray) -> tuple[TensorDataset, int]:
-        X_t = torch.tensor(X, dtype=torch.float32)
-        y_t = torch.tensor(y, dtype=torch.float32).reshape(-1, 1)
-        return TensorDataset(X_t, y_t), X_t.shape[1]
+    # ===== Global rows for table =====
+    all_rows = []
+    all_index = []
 
-    def _train_dp_sgd(model: nn.Module,
-                      train_loader: DataLoader,
-                      epochs: int = EPOCHS,
-                      lr: float = LR,
-                      noise_multiplier: float = DP_NOISE_MULT,
-                      max_grad_norm: float = DP_MAX_GRAD_NORM) -> None:
-        model.to(DEVICE)
-        optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.0)
-        loss_fn = nn.L1Loss()
-        privacy_engine = PrivacyEngine()
-        model, optimizer, train_loader = privacy_engine.make_private(
-            module=model,
-            optimizer=optimizer,
-            data_loader=train_loader,
-            noise_multiplier=noise_multiplier,
-            max_grad_norm=max_grad_norm,
+    # === Adult dataset only ===
+    ds_name = "Adult"
+    path = datasets[ds_name]["path"]
+    criteria = datasets[ds_name]["criteria"]
+
+    # Read raw once and encode all columns (no manual permutation)
+    df_raw = pd.read_csv(path)
+    df = _encode_and_clean(path, df_raw.columns.values)
+
+    for criterion in criteria:
+        protected = criterion[0]
+        response = criterion[1]
+
+        # label uses full criterion so we don't accidentally merge 3 into 2
+        crit_label = f"{protected} , {response}"
+        crit_uncond = [protected, response]  # unconditional measures still use only these two
+
+        # === Measures (computed once per criterion) ===
+        df_for_measures = df[crit_uncond]
+
+        tvd = float(
+            ProxyMutualInformationTVD(data=df_for_measures).calculate([crit_uncond], epsilon=epsilon)
         )
 
-        model.train()
-        for _ in range(epochs):
-            for xb, yb in train_loader:
-                xb = xb.to(DEVICE); yb = yb.to(DEVICE)
-                optimizer.zero_grad()
-                preds = model(xb)
-                loss = loss_fn(preds, yb)
-                loss.backward()
-                optimizer.step()
+        repair = float(
+            ProxyRepairMaxSat(data=df_for_measures).calculate([crit_uncond], epsilon=epsilon)
+        )
+        print(repair)
 
-    def _predict(model: nn.Module, X: np.ndarray) -> np.ndarray:
-        model.eval()
-        with torch.no_grad():
-            X_t = torch.tensor(X, dtype=torch.float32, device=DEVICE)
-            yhat = model(X_t).cpu().numpy().reshape(-1)
-        return np.clip(yhat, 0.0, 1.0)
+        # TupleContribution typically uses full df
+        tc = float(
+            TupleContribution(data=df).calculate([crit_uncond], epsilon=epsilon)
+        )
 
-    # ===== Global rows for ALL datasets =====
-    all_rows = []
-    all_index = []   # list of (dataset_name, criterion_label) tuples
-
-    # === Core loop over datasets and criteria ===
-    for ds_name, spec in datasets.items():
-        print(f"\n=== DATASET (unconditional): {ds_name} ===")
-        path = spec["path"]
-        criteria = spec["criteria"]
-
-        # accumulators: criterion -> sums
-        sum_linear = defaultdict(lambda: np.array([0.0, 0.0], dtype=float))   # (MAE, DP)
-        sum_mlp    = defaultdict(lambda: np.array([0.0, 0.0], dtype=float))   # (MAE, DP)
-        sum_mi     = defaultdict(float)                                       # MutualInformation
-        sum_tvd    = defaultdict(float)                                       # ProxyMutualInformationTVD
-        sum_repair = defaultdict(float)                                       # ProxyRepairMaxSat
-        sum_tc     = defaultdict(float)                                       # TupleContribution
+        # === Random Forest model with repetitions (inner loop) ===
+        mae_sum = 0.0
+        dp_sum = 0.0
 
         for rep in range(repetitions):
-            for criterion in criteria:
-                # Use only protected + response; ignore admissible for the unconditional version
-                protected = criterion[0]
-                response = criterion[1]
-                admissible = criterion[2] if len(criterion) > 2 else None
+            # Features: all encoded columns except response, preserve order from df
+            X_full = df.drop(columns=[response])
+            y_full = df[response].to_numpy(dtype=float)
+            prot_full = df[protected].to_numpy()
 
-                crit_label = f"{protected}->{response}".lower()
-                crit_uncond = [protected, response]  # 2-element criterion for unconditional measures
+            # optional stratification
+            stratify = None
+            try:
+                y_round = np.round(y_full)
+                if len(np.unique(y_round)) <= 10:
+                    stratify = y_round
+            except Exception:
+                pass
 
-                # encode and clean only needed columns (protected + response)
-                df = _encode_and_clean(path, crit_uncond)
-                df_repair = df.sample(n=min(num_tuples_repair, len(df)))
+            X_train, X_test, y_train, y_test, prot_train, prot_test = train_test_split(
+                X_full, y_full, prot_full,
+                test_size=TEST_SIZE,
+                stratify=stratify,
+            )
+            prot_test = pd.Series(prot_test).reset_index(drop=True)
 
-                # limit number of tuples
-                n_total = len(df)
-                n_use = int(min(n_total, num_tuples))
-                if n_use < n_total:
-                    df = df.sample(n=n_use)
+            # MinMax scaling on all features (no column permutation)
+            numeric_features = X_train.columns
+            scaler = MinMaxScaler()
+            X_train.loc[:, numeric_features] = scaler.fit_transform(X_train[numeric_features])
+            X_test.loc[:, numeric_features] = scaler.transform(X_test[numeric_features])
 
-                # ======= MEASURES (unconditional; pass 2-element criterion) =======
-                mutual_information = MutualInformation(data=df)
-                sum_mi[crit_label] += float(mutual_information.calculate([crit_uncond], epsilon=epsilon))
+            # RandomForest
+            model = RandomForestClassifier()
+            model.fit(X_train, y_train)
 
-                tvd_proxy = ProxyMutualInformationTVD(data=df)
-                sum_tvd[crit_label] += float(tvd_proxy.calculate([crit_uncond], epsilon=epsilon))
+            yhat_proba = model.predict_proba(X_test)[:, 1]
+            yhat_label = (yhat_proba >= POS_THRESHOLD).astype(int)
 
-                if path == "data/census.csv":
-                    repair_proxy = ProxyRepairMaxSat(data=df_repair)
-                else:
-                    repair_proxy = ProxyRepairMaxSat(data=df)
-                sum_repair[crit_label] += float(repair_proxy.calculate([crit_uncond], epsilon=epsilon))
+            mae_rf = float(np.mean(np.abs(yhat_label - y_test)))
+            dp_rf = _demographic_parity(yhat_proba, prot_test, threshold=POS_THRESHOLD)
 
-                tc_proxy = TupleContribution(data=df)
-                sum_tc[crit_label] += float(tc_proxy.calculate([crit_uncond], epsilon=epsilon))
+            mae_sum += mae_rf
+            dp_sum += dp_rf
 
-                # ======= MODELS (Regression / “Random Forest” proxy MLP) =======
-                feat_cols = [protected]
-                X_full = df[feat_cols].to_numpy(dtype=float)
+        mae_avg = mae_sum / repetitions
+        dp_avg = dp_sum / repetitions
 
-                # ORIGINAL-SCALE target
-                y_real_full = df[response].to_numpy(dtype=float)
-
-                # scale y to [0, 1] for training
-                y_min = y_real_full.min()
-                y_max = y_real_full.max()
-                if y_max > y_min:
-                    y_full = (y_real_full - y_min) / (y_max - y_min)
-                else:
-                    y_full = np.zeros_like(y_real_full)
-
-                # split (keep both scaled and real targets)
-                stratify = None
-                try:
-                    y_round = np.round(y_full)
-                    if len(np.unique(y_round)) <= 10:
-                        stratify = y_round
-                except Exception:
-                    stratify = None
-
-                prot_full = df[protected].to_numpy()
-                X_train, X_test, y_train, y_test, y_real_train, y_real_test, prot_train, prot_test = train_test_split(
-                    X_full, y_full, y_real_full, prot_full,
-                    test_size=TEST_SIZE,
-                    stratify=stratify
-                )
-                prot_test = pd.Series(prot_test).reset_index(drop=True)
-
-                # to torch
-                train_ds, in_dim = _to_torch(X_train, y_train)
-                effective_batch = min(BATCH_SIZE, len(train_ds))
-                train_loader = DataLoader(
-                    train_ds, batch_size=effective_batch,
-                    shuffle=True, drop_last=False
-                )
-
-                # --- Regression (DPLinear) ---
-                lin = DPLinear(in_dim)
-                _train_dp_sgd(lin, train_loader)
-                yhat_lin_scaled = _predict(lin, X_test)
-                mae_lin = float(np.mean(np.abs(yhat_lin_scaled - y_test)))  # in [0,1]
-
-                dp_lin = _demographic_parity(
-                    yhat_lin_scaled,
-                    prot_test,
-                    threshold=POS_THRESHOLD
-                )
-                sum_linear[crit_label] += np.array([mae_lin, dp_lin], dtype=float)
-
-                # --- Random Forest (DPMLP proxy) ---
-                mlp = DPMLP(in_dim)
-                _train_dp_sgd(mlp, train_loader)
-                yhat_mlp = _predict(mlp, X_test)
-                mae_mlp = float(np.mean(np.abs(yhat_mlp - y_real_test)))  # L1 vs REAL values
-
-                dp_mlp = _demographic_parity(
-                    yhat_mlp,
-                    prot_test,
-                    threshold=POS_THRESHOLD
-                )
-                sum_mlp[crit_label] += np.array([mae_mlp, dp_mlp], dtype=float)
-
-        # ===== Averaging over repetitions; append to global table =====
-        crits_sorted = sorted(sum_linear.keys())
-        for crit in crits_sorted:
-            tvd_avg = sum_tvd[crit] / repetitions
-            repair_avg = sum_repair[crit] / repetitions
-            tc_avg = sum_tc[crit] / repetitions
-
-            mae_lin_avg = sum_linear[crit][0] / repetitions
-            dp_lin_avg = sum_linear[crit][1] / repetitions
-            mae_mlp_avg = sum_mlp[crit][0] / repetitions
-            dp_mlp_avg = sum_mlp[crit][1] / repetitions
-
-            all_rows.append([
-                round(tvd_avg, 4),
-                round(repair_avg, 4),
-                round(tc_avg, 4),
-                round(mae_lin_avg, 4),
-                round(dp_lin_avg, 4),
-                round(mae_mlp_avg, 4),
-                round(dp_mlp_avg, 4),
-            ])
-            all_index.append((ds_name, crit))
+        all_rows.append([
+            round(tvd, 4),
+            round(repair, 4),
+            round(tc, 4),
+            round(mae_avg, 4),
+            round(dp_avg, 4),
+        ])
+        all_index.append((ds_name, crit_label))
 
     # ===== Build one big table with row MultiIndex (Dataset, Criterion) =====
     row_index = pd.MultiIndex.from_tuples(all_index, names=["Dataset", "Criterion"])
@@ -2145,62 +2023,53 @@ def run_experiment_8_unconditional(
         ("ProxyMutualInformationTVD", ""),
         ("RepairMaxSat", ""),
         ("TupleContribution", ""),
-        ("Regression", "L1 Error"),
-        ("Regression", "Unfairness (DP)"),
-        ("Random Forest", "L1 Error"),
-        ("Random Forest", "Unfairness (DP)"),
+        ("RandomForest", "L1 Error"),
+        ("RandomForest", "Unfairness (DP)"),
     ])
 
     table_all = pd.DataFrame(all_rows, index=row_index, columns=col_index)
 
     # ---------- Histogram plot (unconditional) ----------
-    # Sort criteria by Regression Unfairness (DP)
-    fairness_col = ("Regression", "Unfairness (DP)")
+    fairness_col = ("RandomForest", "Unfairness (DP)")
+    l1_col = ("RandomForest", "L1 Error")
+
     fairness_vals = table_all[fairness_col].to_numpy(dtype=float)
+    order = np.argsort(fairness_vals)  # least -> most unfair
 
-    # order = np.argsort(fairness_vals)[::-1]  # for descending (most unfair left)
-    order = np.argsort(fairness_vals)         # ascending (least -> most unfair)
-
-    # Reorder labels and x positions
     crit_labels = [f"{ds} | {crit}" for ds, crit in table_all.index]
     crit_labels = [crit_labels[i] for i in order]
 
     x = np.arange(len(table_all))
-    width = 0.18
+    width = 0.16
 
     measure_cols = [
         ("ProxyMutualInformationTVD", ""),
         ("RepairMaxSat", ""),
         ("TupleContribution", ""),
+        l1_col,
+        fairness_col,
     ]
+    labels = ["TVD", "RepairMaxSat", "TupleContribution", "RF L1", "RF DP"]
+    offsets = np.linspace(-2 * width, 2 * width, len(measure_cols))
 
-    fig, ax = plt.subplots(figsize=(max(8, len(table_all) * 0.25), 4))
+    fig, ax = plt.subplots(figsize=(max(8, len(table_all) * 0.3), 4))
 
-    offsets = [-1.5 * width, -0.5 * width, 0.5 * width, 1.5 * width]
-    labels = ["TVD", "RepairMaxSat", "TupleContribution", "Regression (DP)"]
-
-    for i, col in enumerate(measure_cols + [fairness_col]):
-        vals = table_all[col].to_numpy(dtype=float)
-        vals = vals[order]   # sort bars by unfairness order
-        ax.bar(x + offsets[i], vals, width, label=labels[i])
+    for offset, label, col in zip(offsets, labels, measure_cols):
+        vals = table_all[col].to_numpy(dtype=float)[order]
+        ax.bar(x + offset, vals, width, label=label)
 
     ax.set_xticks(x)
     ax.set_xticklabels(crit_labels, rotation=45, ha="right", fontsize=7)
-
-    ax.set_yscale('log')
-    ax.set_ylabel("Unfairness / Measure value (log scale)", fontsize=9)
-    ax.set_title("Unconditional: Measures and Regression Demographic Parity per Criterion", fontsize=10)
-
-    ax.tick_params(axis='y', labelsize=8)
+    ax.set_ylabel("Value")
+    ax.set_title("Unconditional (Adult): Measures, RF L1 and RF DP per Criterion", fontsize=10)
     ax.legend(fontsize=8)
-
     plt.tight_layout()
 
+    import os
     png_outfile = os.path.splitext(outfile)[0] + ".png"
     os.makedirs(os.path.dirname(png_outfile), exist_ok=True)
     plt.savefig(png_outfile, dpi=256, bbox_inches="tight")
     plt.show()
-    # ----------------------------------------
 
     # print without truncation
     with pd.option_context(
@@ -2209,10 +2078,9 @@ def run_experiment_8_unconditional(
         "display.width", 200,
         "display.max_colwidth", None,
     ):
-        print("\n=== Unconditional experiment (averaged, rounded to 4 decimals) ===")
+        print("\n=== Unconditional experiment (Adult, averaged, rounded to 4 decimals) ===")
         print(table_all)
 
-    # save to Excel
     os.makedirs(os.path.dirname(outfile), exist_ok=True)
     table_all.to_excel(outfile, merge_cells=True)
 
@@ -2555,8 +2423,8 @@ if __name__ == "__main__":
     # run_experiment_4()
     # run_experiment_5()
     # run_experiment_6()
-    run_experiment_7()
+    # run_experiment_7()
     # run_experiment_7_make_less_unfair()
-    # run_experiment_8_unconditional()
+    run_experiment_8_unconditional()
     # run_experiment_8_conditional()
 
