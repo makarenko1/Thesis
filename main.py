@@ -18,251 +18,6 @@ from tuple_contribution import TupleContribution
 from unused_measures.proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
 
 
-def create_plot_1():
-    # --- config ---------------------------------------------------
-    DATASETS = [
-        {"name": "Adult", "path": "data/adult.csv", "attrs": [
-            ("sex", "income>50K", "education"),
-            ("race", "income>50K", "education"),
-            ("education", "education-num", "sex"),
-        ]},
-        {"name": "StackOverflow", "path": "data/stackoverflow.csv", "attrs": [
-            ("Country", "EdLevel", "Age"),
-            ("Country", "DevType", "Age"),
-            ("Country", "SurveyLength", "Age"),
-            ("Country", "SOVisitFreq", "Age"),
-        ]},
-        {"name": "COMPAS", "path": "data/compas.csv", "attrs": [
-            ("race", "c_charge_desc", "age"),
-            ("race", "score_text", "age"),
-            ("race", "sex", "age"),
-        ]},
-    ]
-
-    # Row order: MI, PrivBayes Original, PrivBayes with offset, TVD
-    PROXIES = [
-        ("Mutual\nInformation", "MI"),
-        ("PrivBayes Proxy", "PRIV_ORIG"),
-        ("PrivBayes Proxy\nwith offset", "PRIV_OFFSET"),
-        ("TVD Proxy", "TVD"),
-    ]
-
-    PROXY_COLOR = {
-        "MI": "#1f77b4",
-        "PRIV_ORIG": "#ff7f0e",
-        "PRIV_OFFSET": "#9467bd",
-        "TVD": "#2ca02c",
-    }
-
-    # Bigger fonts everywhere
-    TITLE_FS = 26  # column titles
-    ROWLAB_FS = 26  # row (y-axis) labels
-    TICK_FS = 24  # tick labels (bottom axis + y-ticks)
-    ANNOT_FS = 18  # numbers above bars
-
-    # --- compute values
-    vals = {k: {} for _, k in PROXIES}
-    for ds in DATASETS:
-        ds_name, path, attrs = ds["name"], ds["path"], ds["attrs"]
-        mi_scores, priv_scores_orig, priv_scores_offset, tvd_scores = [], [], [], []
-        for s_col, o_col, a_col in attrs:
-            mi_scores.append(MutualInformation(datapath=path).calculate([s_col, o_col, a_col]))
-            priv_scores_orig.append(ProxyMutualInformationPrivbayes(datapath=path).calculate(s_col, o_col, a_col))
-            priv_scores_offset.append(ProxyMutualInformationPrivbayes(datapath=path).calculate(s_col, o_col, a_col))
-            tvd_scores.append(ProxyMutualInformationTVD(datapath=path).calculate([s_col, o_col, a_col]))
-        vals["MI"][ds_name] = mi_scores
-        vals["PRIV_ORIG"][ds_name] = priv_scores_orig
-        vals["PRIV_OFFSET"][ds_name] = priv_scores_offset
-        vals["TVD"][ds_name] = tvd_scores
-
-    # labels per dataset
-    ds_labels = {ds["name"]: [f"{s},{o} | {a}" for (s, o, a) in ds["attrs"]] for ds in DATASETS}
-
-    # --- figure
-    n_rows, n_cols = len(PROXIES), len(DATASETS)
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 14), constrained_layout=True)
-
-    if n_rows == 1:
-        axes = np.array([axes])
-    if n_cols == 1:
-        axes = axes.reshape(n_rows, 1)
-
-    def annotate_bar(ax, rect):
-        h = rect.get_height()
-        x = rect.get_x() + rect.get_width() / 2.0
-        va = 'bottom' if h >= 0 else 'top'
-        offset = 6 if h >= 0 else -8
-        ax.annotate(f"{h:.3f}", xy=(x, h), xytext=(0, offset),
-                    textcoords="offset points", ha="center", va=va, fontsize=ANNOT_FS)
-
-    # column titles
-    for c, ds in enumerate(DATASETS):
-        axes[0, c].set_title(ds["name"], fontsize=TITLE_FS)
-
-    # draw bars
-    for r, (proxy_title, proxy_key) in enumerate(PROXIES):
-        color = PROXY_COLOR[proxy_key]
-
-        # common y-range per row (allow negatives for PRIV_ORIG if any)
-        row_vals = []
-        for ds in DATASETS:
-            row_vals.extend(vals[proxy_key][ds["name"]])
-        row_vals = np.asarray(row_vals, dtype=float)
-
-
-        for c, ds in enumerate(DATASETS):
-            ax = axes[r, c]
-            y = vals[proxy_key][ds["name"]]
-            labels = ds_labels[ds["name"]]
-
-            if row_vals.size == 0:
-                row_min, row_max = -1.0, 1.0
-            else:
-                row_min, row_max = float(np.min(row_vals)), float(np.max(row_vals))
-
-            # Always add some proportional padding
-            pad = 0.05 * max(1.0, abs(row_max - row_min))  # 5% of the data range
-
-            if proxy_key in ("MI", "PRIV_OFFSET", "TVD"):
-                ymin, ymax = 0.0, row_max + pad
-            else:
-                ymin, ymax = row_min - pad, row_max + pad
-
-            ax.set_ylim(ymin, ymax)
-
-            # tighter spacing: compress positions + narrower bars
-            x = np.arange(len(y)) * 0.65
-            bars = ax.bar(x, y, color=color, width=0.5)
-            for rect in bars:
-                annotate_bar(ax, rect)
-
-            ax.set_xticks(x)
-
-            # bottom row: bigger xticklabels
-            if r == n_rows - 1:
-                ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=TICK_FS)
-            else:
-                ax.set_xticklabels([])
-
-            if c == 0:
-                ax.set_ylabel(proxy_title, fontsize=ROWLAB_FS, labelpad=20)
-
-            ax.yaxis.grid(True, linestyle=":", linewidth=0.9, alpha=0.65)
-            ax.tick_params(axis='y', labelsize=TICK_FS)
-            ax.set_ylim(row_min, row_max)
-
-            if c == 0:
-                ax.set_ylabel(proxy_title, fontsize=ROWLAB_FS)
-
-    plt.savefig("plots/plot1.png", dpi=220)
-    plt.show()
-
-def create_plot_2():
-    # --- config ---------------------------------------------------
-    DATASETS = [
-        {"name": "Adult", "path": "data/adult.csv", "attrs": [
-            ("sex", "income>50K", "education"),
-            ("race", "income>50K", "education"),
-            ("education", "education-num", "sex"),
-        ]},
-        {"name": "StackOverflow", "path": "data/stackoverflow.csv", "attrs": [
-            ("Country", "EdLevel", "Age"),
-            ("Country", "DevType", "Age"),
-            ("Country", "SurveyLength", "Age"),
-            ("Country", "SOVisitFreq", "Age"),
-        ]},
-        {"name": "COMPAS", "path": "data/compas.csv", "attrs": [
-            ("race", "c_charge_desc", "age"),
-            ("race", "score_text", "age"),
-            ("race", "sex", "age"),
-        ]},
-    ]
-
-    MEASURES = [
-        ("TVD Proxy", "TVD"),
-        ("Tuple Contribution", "AUC"),
-    ]
-
-    # blue and orange colors
-    MEASURE_COLOR = {
-        "TVD": "#1f77b4",   # blue
-        "AUC": "#ff7f0e",   # orange
-    }
-
-    TITLE_FS = 26
-    ROWLAB_FS = 26
-    TICK_FS = 24
-    ANNOT_FS = 18
-
-    # --- compute values ------------------------------------------
-    vals = {k: {} for _, k in MEASURES}
-    for ds in DATASETS:
-        ds_name, path, attrs = ds["name"], ds["path"], ds["attrs"]
-        tvd_scores, auc_scores = [], []
-        for s_col, o_col, a_col in attrs:
-            tvd_scores.append(ProxyMutualInformationTVD(datapath=path).calculate([s_col, o_col, a_col]))
-            auc_scores.append(TupleContribution(datapath=path).calculate([s_col, o_col, a_col]))
-        vals["TVD"][ds_name] = tvd_scores
-        vals["AUC"][ds_name] = auc_scores
-
-    ds_labels = {ds["name"]: [f"{s},{o} | {a}" for (s, o, a) in ds["attrs"]] for ds in DATASETS}
-
-    # --- figure ---------------------------------------------------
-    n_rows, n_cols = len(MEASURES), len(DATASETS)
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 10), constrained_layout=True)
-
-    def annotate_bar(ax, rect):
-        h = rect.get_height()
-        x = rect.get_x() + rect.get_width() / 2.0
-        va = 'bottom' if h >= 0 else 'top'
-        offset = 6 if h >= 0 else -8
-        ax.annotate(f"{h:.3f}", xy=(x, h), xytext=(0, offset),
-                    textcoords="offset points", ha="center", va=va, fontsize=ANNOT_FS)
-
-    # Column titles
-    for c, ds in enumerate(DATASETS):
-        axes[0, c].set_title(ds["name"], fontsize=TITLE_FS)
-
-    # Draw bars ----------------------------------------------------
-    for r, (measure_title, measure_key) in enumerate(MEASURES):
-        color = MEASURE_COLOR[measure_key]
-        row_vals = []
-        for ds in DATASETS:
-            row_vals.extend(vals[measure_key][ds["name"]])
-        row_vals = np.asarray(row_vals, dtype=float)
-        row_min, row_max = float(np.min(row_vals)), float(np.max(row_vals))
-        pad = 0.05 * max(1.0, abs(row_max - row_min))
-        ymin, ymax = 0.0, row_max + pad
-
-        for c, ds in enumerate(DATASETS):
-            ax = axes[r, c]
-            y = vals[measure_key][ds["name"]]
-            labels = ds_labels[ds["name"]]
-
-            ax.set_ylim(ymin, ymax)
-            x = np.arange(len(y)) * 0.65
-            bars = ax.bar(x, y, color=color, width=0.5)
-            for rect in bars:
-                annotate_bar(ax, rect)
-
-            ax.set_xticks(x)
-            if r == n_rows - 1:
-                ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=TICK_FS)
-            else:
-                ax.set_xticklabels([])
-
-            if c == 0:
-                ax.set_ylabel(measure_title, fontsize=ROWLAB_FS, labelpad=20)
-
-            ax.yaxis.grid(True, linestyle=":", linewidth=0.9, alpha=0.65)
-            ax.tick_params(axis='y', labelsize=TICK_FS)
-
-    plt.savefig("plots/plot2.png", dpi=220)
-    plt.show()
-
-
-######################################### Experiments ##########################################
-
 adult_criteria = [["sex", "income>50K", "education-num"], ["sex", "income>50K", "hours-per-week"],
                   ["race", "income>50K", "education-num"], ["race", "income>50K", "hours-per-week"]]
 
@@ -301,13 +56,273 @@ datasets = {
     },
 }
 
+datasets_shortened = {
+    "Adult": {
+        "path": "data/adult.csv",
+        "criteria": adult_criteria,
+    },
+    "Stackoverflow": {
+        "path": "data/stackoverflow.csv",
+        "criteria": stackoverflow_criteria,
+    },
+    "Compas": {
+        "path": "data/compas.csv",
+        "criteria": compas_criteria,
+    }
+}
+
+
+from matplotlib.ticker import FuncFormatter
+
+# Formatter: round to 3 decimals, then strip trailing zeros and dot
+def _yfmt(y, pos):
+    s = f"{y:.3f}"
+    s = s.rstrip('0').rstrip('.')
+    return s
+y_formatter = FuncFormatter(_yfmt)
+
+
+def create_plot_1():
+    # --- config ---------------------------------------------------
+    # Row order: MI, PrivBayes Original, PrivBayes with offset, TVD
+    PROXIES = [
+        ("Mutual\nInformation", "MI"),
+        ("PrivBayes Proxy", "PRIV_ORIG"),
+        ("PrivBayes Proxy\nwith offset", "PRIV_OFFSET"),
+        ("TVD Proxy", "TVD"),
+    ]
+
+    PROXY_COLOR = {
+        "MI": "#1f77b4",
+        "PRIV_ORIG": "#ff7f0e",
+        "PRIV_OFFSET": "#9467bd",
+        "TVD": "#2ca02c",
+    }
+
+    # Bigger fonts everywhere
+    TITLE_FS = 30  # column titles
+    ROWLAB_FS = 28  # row (y-axis) labels
+    TICK_FS = 28  # tick labels (bottom axis + y-ticks)
+    ANNOT_FS = 22  # numbers above bars
+
+    # bar layout
+    BAR_SPACING = 0.55  # <--- tighter spacing (was effectively 0.65)
+    BAR_WIDTH = 0.5
+
+    # --- compute values
+    vals = {k: {} for _, k in PROXIES}
+    for ds_name, ds_config in datasets_shortened.items():
+        path, attrs = ds_config["path"], ds_config["criteria"]
+        mi_scores, priv_scores_orig, priv_scores_offset, tvd_scores = [], [], [], []
+        for s_col, o_col, a_col in attrs:
+            mi_scores.append(MutualInformation(datapath=path).calculate([[s_col, o_col, a_col]],
+                                                                        encode_and_clean=True))
+            priv_scores_orig.append(ProxyMutualInformationPrivbayes(datapath=path).calculate(
+                s_col, o_col, a_col, add_offset=False
+            ))
+            priv_scores_offset.append(ProxyMutualInformationPrivbayes(datapath=path).calculate(
+                s_col, o_col, a_col
+            ))
+            tvd_scores.append(ProxyMutualInformationTVD(datapath=path).calculate(
+                [[s_col, o_col, a_col]], encode_and_clean=True
+            ))
+        vals["MI"][ds_name] = mi_scores
+        vals["PRIV_ORIG"][ds_name] = priv_scores_orig
+        vals["PRIV_OFFSET"][ds_name] = priv_scores_offset
+        vals["TVD"][ds_name] = tvd_scores
+
+    # labels per dataset
+    ds_labels = {
+        ds_name: [str(i) for i in range(1, len(ds_config["criteria"]) + 1)]
+        for ds_name, ds_config in datasets_shortened.items()
+    }
+
+    # --- figure
+    n_rows, n_cols = len(PROXIES), len(datasets_shortened)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 14), constrained_layout=True)
+
+    if n_rows == 1:
+        axes = np.array([axes])
+    if n_cols == 1:
+        axes = axes.reshape(n_rows, 1)
+
+    def annotate_bar(ax, rect):
+        h = rect.get_height()
+        x = rect.get_x() + rect.get_width() / 2.0
+        va = 'bottom' if h >= 0 else 'top'
+        offset = 6 if h >= 0 else -8
+        ax.annotate(
+            f"{h:.3f}", xy=(x, h), xytext=(0, offset),
+            textcoords="offset points", ha="center", va=va, fontsize=ANNOT_FS
+        )
+
+    # column titles
+    for c, ds_name in enumerate(datasets_shortened):
+        axes[0, c].set_title(ds_name, fontsize=TITLE_FS)
+
+    # draw bars
+    for r, (proxy_title, proxy_key) in enumerate(PROXIES):
+        color = PROXY_COLOR[proxy_key]
+
+        # common y-range per row
+        row_vals = []
+        for ds_name in datasets_shortened:
+            row_vals.extend(vals[proxy_key][ds_name])
+        row_vals = np.asarray(row_vals, dtype=float)
+
+        for c, ds_name in enumerate(datasets_shortened):
+            ax = axes[r, c]
+            y = vals[proxy_key][ds_name]
+            labels = ds_labels[ds_name]
+
+            if row_vals.size == 0:
+                row_min, row_max = -1.0, 1.0
+            else:
+                row_min, row_max = float(np.min(row_vals)), float(np.max(row_vals))
+
+            pad = 0.05 * max(1.0, abs(row_max - row_min))  # 5% padding
+
+            if proxy_key in ("MI", "PRIV_OFFSET", "TVD"):
+                ymin, ymax = 0.0, row_max + pad
+            else:
+                ymin, ymax = row_min - pad, row_max + pad
+
+            ax.set_ylim(ymin, ymax)
+
+            # tighter spacing
+            x = np.arange(len(y)) * BAR_SPACING
+            bars = ax.bar(x, y, color=color, width=BAR_WIDTH)
+            for rect in bars:
+                annotate_bar(ax, rect)
+
+            ax.set_xticks(x)
+            if r == n_rows - 1:
+                ax.set_xticklabels(labels, ha="right", fontsize=TICK_FS)
+                # x label only for bottom row
+                ax.set_xlabel("criterion", fontsize=ROWLAB_FS)
+            else:
+                ax.set_xticklabels([])
+
+            if c == 0:
+                ax.set_ylabel(proxy_title, fontsize=ROWLAB_FS, labelpad=20)
+
+            ax.yaxis.grid(True, linestyle=":", linewidth=0.9, alpha=0.65)
+            ax.tick_params(axis='y', labelsize=TICK_FS)
+            # <<< format y tick labels here
+            ax.yaxis.set_major_formatter(y_formatter)
+
+    plt.savefig("plots/plot1.png", dpi=220)
+    plt.show()
+
+
+def create_plot_2():
+    # --- config ---------------------------------------------------
+    MEASURES = [
+        ("TVD Proxy", "TVD"),
+        ("Tuple Contribution", "AUC"),
+    ]
+
+    MEASURE_COLOR = {
+        "TVD": "#1f77b4",   # blue
+        "AUC": "#ff7f0e",   # orange
+    }
+
+    TITLE_FS = 32  # column titles
+    ROWLAB_FS = 32  # row (y-axis) labels
+    TICK_FS = 28  # tick labels (bottom axis + y-ticks)
+    ANNOT_FS = 22  # numbers above bars
+
+    BAR_SPACING = 0.55  # <--- tighter spacing (was 0.65)
+    BAR_WIDTH = 0.5
+
+    # --- compute values ------------------------------------------
+    vals = {k: {} for _, k in MEASURES}
+    for ds_name, ds_config in datasets_shortened.items():
+        path, attrs = ds_config["path"], ds_config["criteria"]
+        tvd_scores, auc_scores = [], []
+        for s_col, o_col, a_col in attrs:
+            tvd_scores.append(ProxyMutualInformationTVD(datapath=path).calculate(
+                [[s_col, o_col, a_col]], encode_and_clean=True
+            ))
+            auc_scores.append(TupleContribution(datapath=path).calculate(
+                [[s_col, o_col, a_col]], encode_and_clean=True
+            ))
+        vals["TVD"][ds_name] = tvd_scores
+        vals["AUC"][ds_name] = auc_scores
+
+    ds_labels = {
+        ds_name: [str(i) for i in range(1, len(ds_config["criteria"]) + 1)]
+        for ds_name, ds_config in datasets_shortened.items()
+    }
+
+    # --- figure ---------------------------------------------------
+    n_rows, n_cols = len(MEASURES), len(datasets_shortened)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 10), constrained_layout=True)
+
+    def annotate_bar(ax, rect):
+        h = rect.get_height()
+        x = rect.get_x() + rect.get_width() / 2.0
+        va = 'bottom' if h >= 0 else 'top'
+        offset = 6 if h >= 0 else -8
+        ax.annotate(
+            f"{h:.3f}", xy=(x, h), xytext=(0, offset),
+            textcoords="offset points", ha="center", va=va, fontsize=ANNOT_FS
+        )
+
+    # Column titles
+    for c, ds_name in enumerate(datasets_shortened):
+        axes[0, c].set_title(ds_name, fontsize=TITLE_FS)
+
+    # Draw bars ----------------------------------------------------
+    for r, (measure_title, measure_key) in enumerate(MEASURES):
+        color = MEASURE_COLOR[measure_key]
+        row_vals = []
+        for ds_name in datasets_shortened:
+            row_vals.extend(vals[measure_key][ds_name])
+        row_vals = np.asarray(row_vals, dtype=float)
+        row_min, row_max = float(np.min(row_vals)), float(np.max(row_vals))
+        pad = 0.05 * max(1.0, abs(row_max - row_min))
+        ymin, ymax = 0.0, row_max + pad
+
+        for c, ds_name in enumerate(datasets_shortened):
+            ax = axes[r, c]
+            y = vals[measure_key][ds_name]
+            labels = ds_labels[ds_name]
+
+            ax.set_ylim(ymin, ymax)
+            x = np.arange(len(y)) * BAR_SPACING
+            bars = ax.bar(x, y, color=color, width=BAR_WIDTH)
+            for rect in bars:
+                annotate_bar(ax, rect)
+
+            ax.set_xticks(x)
+            if r == n_rows - 1:
+                ax.set_xticklabels(labels, ha="right", fontsize=TICK_FS)
+                # x label only for bottom row
+                ax.set_xlabel("criterion", fontsize=ROWLAB_FS)
+            else:
+                ax.set_xticklabels([])
+
+            if c == 0:
+                ax.set_ylabel(measure_title, fontsize=ROWLAB_FS, labelpad=20)
+
+            ax.yaxis.grid(True, linestyle=":", linewidth=0.9, alpha=0.65)
+            ax.tick_params(axis='y', labelsize=TICK_FS)
+            ax.yaxis.set_major_formatter(y_formatter)  # <<< apply formatter
+
+    plt.savefig("plots/plot2.png", dpi=220)
+    plt.show()
+
+
+######################################### Experiments ##########################################
+
 measures = {
     "Proxy Mutual Information TVD": ProxyMutualInformationTVD,
     "Proxy RepairMaxSat": ProxyRepairMaxSat,
     "Tuple Contribution": TupleContribution,
 }
 
-timeout_seconds = 1 * 60 * 60
+timeout_seconds = 2 * 60 * 60
 
 from sklearn.preprocessing import LabelEncoder
 import pandas as pd
@@ -1280,22 +1295,26 @@ def run_experiment_6(
 def run_experiment_7(
     epsilon: Optional[float] = None,
     num_tuples: int = 60000,
-    repetitions_model: int = 20,
-    repetitions_measures: int = 5,
+    repetitions_model: int = 5,
+    repetitions_measures: int = 0,
     outfile: str = "plots/experiment7.png",
 ):
     """
     Mixed real-data experiment.
 
     We use one criterion per dataset:
-      - IPUMS-CPS   : census_criteria[3]
+      - IPUMS-CPS    : census_criteria[3]
       - Stackoverflow: stackoverflow_criteria[3]
-      - Compas      : compas_criteria[0]
-      - Healthcare  : healthcare_criteria[1]
+      - Compas       : compas_criteria[0]
+      - Healthcare   : healthcare_criteria[1]
 
     For each (dataset, criterion), we gradually INCREASE dependence between
     protected and response (within each admissible stratum) by editing a growing
     fraction of rows.
+
+    The model is trained on *all* columns (all features except the response),
+    while the proxy measures operate only on the projection to
+    (protected, response, admissible).
     """
 
     plt.rcParams.update(
@@ -1325,6 +1344,73 @@ def run_experiment_7(
 
         def forward(self, x):
             return self.net(x)  # raw logits
+
+    # -------------------- encoding / cleaning -------------------- #
+    def _encode_and_clean(data_path: str) -> pd.DataFrame:
+        """
+        Read CSV, clean missing values and make all columns numeric.
+
+        Steps:
+        - Read CSV and map ["NA", "N/A", ""] to NaN.
+        - (For census only) convert AGE/INCTOT to numeric and apply special
+          AGE binning and INCTOT clipping/bucketing.
+        - For *all numeric* columns:
+            * convert to numeric,
+            * replace negative values with 0,
+            * fill NaNs with the column mean (or 0 if all NaN).
+        - For *all non-numeric* columns:
+            * replace NaN with the string "MISSING",
+            * label-encode to integers.
+        """
+        df = pd.read_csv(data_path)
+        df = df.replace(["NA", "N/A", ""], pd.NA)
+
+        # --- special handling for IPUMS-CPS census data (before imputation) ---
+        if data_path == "data/census.csv":
+            # Convert AGE to numeric first
+            if "AGE" in df.columns:
+                df["AGE"] = pd.to_numeric(df["AGE"], errors="coerce")
+
+            # Convert INCTOT to numeric, clip > 200000, keep NaN for now
+            if "INCTOT" in df.columns:
+                inct = pd.to_numeric(df["INCTOT"], errors="coerce")
+                # Keep rows with INCTOT <= 200000; NaN <= 200000 is False, so keep NaNs
+                mask_inct = (inct <= 200000) | inct.isna()
+                df = df[mask_inct].copy()
+                df["INCTOT"] = pd.to_numeric(df["INCTOT"], errors="coerce")
+
+        # --- numeric columns: clip negatives, fill NaNs with mean ---
+        for c in df.columns:
+            if pd.api.types.is_numeric_dtype(df[c]):
+                col = pd.to_numeric(df[c], errors="coerce")
+                # replace negative values with 0
+                col = col.mask(col < 0, 0)
+                mean_val = col.mean(skipna=True)
+                if np.isnan(mean_val):
+                    mean_val = 0.0
+                col = col.fillna(mean_val)
+                df[c] = col
+
+        # --- now apply census-specific binning after numeric cleanup ---
+        if data_path == "data/census.csv":
+            if "AGE" in df.columns:
+                age = df["AGE"]
+                age = np.clip(age, 1, None)
+                df["AGE"] = (((age - 1) // 10) + 1) * 10  # 1–10 -> 10, 11–20 -> 20, ...
+
+            if "INCTOT" in df.columns:
+                inctot = df["INCTOT"]
+                df["INCTOT"] = (inctot // 10000) * 10000  # 10k buckets
+
+        # --- non-numeric columns: fill with "MISSING" and label-encode ---
+        for c in df.columns:
+            if not pd.api.types.is_numeric_dtype(df[c]):
+                col = df[c].astype("string")
+                col = col.fillna("MISSING")
+                le = LabelEncoder()
+                df[c] = le.fit_transform(col.astype(str))
+
+        return df
 
     # -------------------- CSP -------------------- #
     def _conditional_statistical_parity(y_hat_prob, protected, admissible):
@@ -1416,10 +1502,9 @@ def run_experiment_7(
         return float(m.calculate([criterion], epsilon=None))
 
     # -------------------- experiment config -------------------- #
-    # 0-based indices: 3 -> "4th criterion", 0 -> "1st", 1 -> "2nd"
     chosen_specs = [
         ("IPUMS-CPS", datasets["IPUMS-CPS"]["path"], census_criteria[3]),
-        ("Stackoverflow", datasets["Stackoverflow"]["path"], stackoverflow_criteria[3]),
+        # ("Stackoverflow", datasets["Stackoverflow"]["path"], stackoverflow_criteria[3]),
         ("Compas", datasets["Compas"]["path"], compas_criteria[0]),
         ("Healthcare", datasets["Healthcare"]["path"], healthcare_criteria[1]),
     ]
@@ -1439,8 +1524,8 @@ def run_experiment_7(
     for ax, (ds_name, path, criterion) in zip(axes, chosen_specs):
         protected, response, admissible = criterion
 
-        # Prepare a base encoded dataset (same for all fracs for this dataset)
-        df_all = _encode_and_clean(path, criterion)
+        # Prepare a base encoded dataset with *all* columns
+        df_all = _encode_and_clean(path)
         df_all = df_all.sample(
             n=min(num_tuples, len(df_all)),
             replace=False,
@@ -1475,10 +1560,7 @@ def run_experiment_7(
         )
         dep_min = _dependency_score(df_dep_min[[protected, response, admissible]], criterion)
 
-        if dep_max >= dep_min:
-            chosen_mode = "max"
-        else:
-            chosen_mode = "min"
+        chosen_mode = "max" if dep_max >= dep_min else "min"
 
         print(
             f"  dep(0)={dep0:.4g}, dep(1,max)={dep_max:.4g}, "
@@ -1513,7 +1595,7 @@ def run_experiment_7(
                     val = m.calculate([criterion], epsilon=epsilon)
                     measure_vals[name].append(float(val))
 
-            # --- model CSP --- #
+            # --- model CSP (model sees ALL columns) --- #
             for _ in range(repetitions_model):
                 df_dep = make_unfair(
                     df_all,
@@ -1525,10 +1607,11 @@ def run_experiment_7(
                     mode=chosen_mode,
                 )
 
+                # All columns except the response as features
                 X = df_dep.drop(columns=[response]).to_numpy(dtype=float)
                 y = df_dep[response].to_numpy(dtype=float)
 
-                # scale y to [0,1] (for safety)
+                # scale y to [0,1] for safety
                 y = (y - y.min()) / (y.max() - y.min() + 1e-100)
 
                 prot = df_dep[protected].to_numpy()
@@ -2469,7 +2552,7 @@ if __name__ == "__main__":
     # run_experiment_1()
     # run_experiment_2()
     # run_experiment_3()
-    run_experiment_4()
+    # run_experiment_4()
     # run_experiment_5()
     # run_experiment_6()
     run_experiment_7()
