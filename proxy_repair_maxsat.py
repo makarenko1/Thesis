@@ -63,16 +63,15 @@ class ProxyRepairMaxSat:
                 df = self._encode_and_clean(self.dataset, cols)
             else:
                 df = self.dataset
-            D = list(df[cols].itertuples(index=False, name=None))
+            D = self._add_id(df, cols)
 
             soft_clauses, hard_clauses, D_star = (
                 self._conversion_to_solving_general_3cnf(D, admissible_col))
 
             opt = Optimize()
             # Add constraints to the optimizer
-            for clause, multiplicity in soft_clauses:
-                for _ in range(multiplicity):
-                    opt.add_soft(clause, weight=1)
+            for clause in soft_clauses:
+                opt.add_soft(clause, weight=1)
             for clause in hard_clauses:
                 opt.add(clause)
 
@@ -123,6 +122,47 @@ class ProxyRepairMaxSat:
         return df
 
     @staticmethod
+    def _add_id(df, cols):
+        """
+        Adds a local ID per distinct (S,O[,A]) and returns tuples for
+        the MVD S, (O,ID) | A:
+
+          - with admissible_col: (S, (O,ID), A)
+          - without admissible_col: (S, (O,ID))
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+        cols : list[str]
+            [protected_col, response_col] (+ [admissible_col] if present)
+
+        Returns
+        -------
+        list[tuple]
+            List of tuples suitable for _conversion_to_solving_general_3cnf.
+        """
+        df_local = df[cols].copy()
+        # local ID 1..n for each distinct (S,O[,A]) group
+        df_local["ID"] = df_local.groupby(cols).cumcount() + 1
+
+        s_col = cols[0]
+        o_col = cols[1]
+
+        if len(cols) == 3:
+            a_col = cols[2]
+            D = [
+                (row[s_col], (row[o_col], row["ID"]), row[a_col])
+                for _, row in df_local.iterrows()
+            ]
+        else:
+            D = [
+                (row[s_col], (row[o_col], row["ID"]))
+                for _, row in df_local.iterrows()
+            ]
+
+        return D
+
+    @staticmethod
     def _clause_key(t1, t2, t3):
         """
         Generates a unique key for a clause defined by three tuples.
@@ -146,7 +186,7 @@ class ProxyRepairMaxSat:
         tuple
             (soft_clauses, hard_clauses, D_star)
         """
-        soft_clauses = []
+        soft_clauses = set()
         hard_clauses = set()
 
         # Step 1: Create D_star
@@ -171,9 +211,9 @@ class ProxyRepairMaxSat:
         for t in D_star:
             x_t = Bool(f"x_{t}")
             if t in D:
-                soft_clauses.append((x_t, D.count(t)))
+                soft_clauses.add(x_t)
             else:
-                soft_clauses.append((Not(x_t), 1))
+                soft_clauses.add(Not(x_t))
 
         # Step 3: Enforce MVD 3CNF constraints
         # OLD MEMORY INEFFICIENT:
