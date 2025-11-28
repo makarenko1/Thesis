@@ -153,7 +153,7 @@ class ProxyRepairMaxSat:
         tuple
             (soft_clauses, hard_clauses, D_star)
         """
-        soft_clauses = set()
+        soft_clauses = []
         hard_clauses = set()
 
         # Step 1: Create D_star
@@ -178,9 +178,9 @@ class ProxyRepairMaxSat:
         for t in D_star:
             x_t = Bool(f"x_{t}")
             if t in D:
-                soft_clauses.add(x_t)
+                soft_clauses.append(x_t)
             else:
-                soft_clauses.add(Not(x_t))
+                soft_clauses.append(Not(x_t))
 
         # Step 3: Enforce MVD 3CNF constraints
         # OLD MEMORY INEFFICIENT:
