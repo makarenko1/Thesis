@@ -63,15 +63,16 @@ class ProxyRepairMaxSat:
                 df = self._encode_and_clean(self.dataset, cols)
             else:
                 df = self.dataset
-
             D = list(df[cols].itertuples(index=False, name=None))
+
             soft_clauses, hard_clauses, D_star = (
                 self._conversion_to_solving_general_3cnf(D, admissible_col))
 
             opt = Optimize()
             # Add constraints to the optimizer
-            for clause in soft_clauses:
-                opt.add_soft(clause, weight=1)
+            for clause, multiplicity in soft_clauses:
+                for _ in range(multiplicity):
+                    opt.add_soft(clause, weight=1)
             for clause in hard_clauses:
                 opt.add(clause)
 
@@ -170,9 +171,9 @@ class ProxyRepairMaxSat:
         for t in D_star:
             x_t = Bool(f"x_{t}")
             if t in D:
-                soft_clauses.append(x_t)
+                soft_clauses.append((x_t, D.count(t)))
             else:
-                soft_clauses.append(Not(x_t))
+                soft_clauses.append((Not(x_t), 1))
 
         # Step 3: Enforce MVD 3CNF constraints
         # OLD MEMORY INEFFICIENT:
