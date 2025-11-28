@@ -2309,19 +2309,15 @@ def run_experiment_8_unconditional(
 #     os.makedirs(os.path.dirname(outfile), exist_ok=True)
 #     table_all.to_excel(outfile, merge_cells=True)
 
-adult_criteria = [["sex", "income>50K"], ["race", "income>50K"],
-                  ["sex", "marital-status"], ["race", "marital-status"]]
+adult_criteria = [["sex", "income>50K"], ["race", "income>50K"], ["sex", "age"]]
 
-census_criteria = [["HEALTH", "INCTOT"], ["HEALTH", "OCC"], ["HEALTH", "MARST"]]
+census_criteria = [["HEALTH", "INCTOT"], ["INCTOT", "AGE"], ["SEX", "AGE"]]
 
-stackoverflow_criteria = [["Country", "RemoteWork"], ["Age", "PurchaseInfluence"],
-                          ["Country", "MainBranch"], ["Age", "MainBranch"]]
+stackoverflow_criteria = [["Age", "EdLevel"], ["Age", "MainBranch"], ["Country", "RemoteWork"]]
 
-compas_criteria = [["race", "is_recid"], ["sex", "is_recid"],
-                   ["race", "decile_score"], ["sex", "v_decile_score"]]
+compas_criteria = [["race", "is_recid"], ["sex", "v_decile_score"], ["sex", "age"]]
 
-healthcare_criteria = [["race", "complications"], ["smoker", "complications"],
-                       ["race", "income"], ["smoker", "income"]]
+healthcare_criteria = [["smoker", "complications"], ["smoker", "income"], ["race", "complications"]]
 
 datasets = {
     "Adult": {
@@ -2349,8 +2345,8 @@ datasets = {
 
 def run_experiment_7(
         epsilon: Optional[float] = None,
-        num_tuples: int = 10000,
-        repetitions: int = 5,
+        num_tuples: int = 1000,
+        repetitions: int = 1,
         outfile: str = "plots/experiment7",
 ):
     all_rows = []

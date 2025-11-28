@@ -65,20 +65,12 @@ class ProxyRepairMaxSat:
                 df = self.dataset
             D = self._add_id(df, cols)
 
-            soft_clauses, hard_clauses, D_star = (
-                self._conversion_to_solving_general_3cnf(D, admissible_col))
-
             opt = Optimize()
-            # Add constraints to the optimizer
-            for clause in soft_clauses:
-                opt.add_soft(clause, weight=1)
-            for clause in hard_clauses:
-                opt.add(clause)
-
+            D_star = (
+                self._conversion_to_solving_general_3cnf(D, admissible_col, opt))
             if opt.check() != sat:
                 print("No satisfying assignment found.")
                 continue
-
             model = opt.model()
 
             # Compute DR = satisfying assignment
@@ -142,22 +134,25 @@ class ProxyRepairMaxSat:
             List of tuples suitable for _conversion_to_solving_general_3cnf.
         """
         df_local = df[cols].copy()
-        # local ID 1..n for each distinct (S,O[,A]) group
         df_local["ID"] = df_local.groupby(cols).cumcount() + 1
 
-        s_col = cols[0]
-        o_col = cols[1]
+        s_col, o_col = cols[0], cols[1]
+        ids = df_local["ID"].to_numpy()
+        s_vals = df_local[s_col].to_numpy()
+        o_vals = df_local[o_col].to_numpy()
 
         if len(cols) == 3:
             a_col = cols[2]
+            a_vals = df_local[a_col].to_numpy()
+            # Build list of tuples without iterrows
             D = [
-                (row[s_col], (row[o_col], row["ID"]), row[a_col])
-                for _, row in df_local.iterrows()
+                (s_vals[i], (o_vals[i], ids[i]), a_vals[i])
+                for i in range(len(df_local))
             ]
         else:
             D = [
-                (row[s_col], (row[o_col], row["ID"]))
-                for _, row in df_local.iterrows()
+                (s_vals[i], (o_vals[i], ids[i]))
+                for i in range(len(df_local))
             ]
 
         return D
@@ -172,7 +167,7 @@ class ProxyRepairMaxSat:
         return tuple(sorted([f"x_{t1}", f"x_{t2}", f"x_{t3}"]))
 
     @staticmethod
-    def _conversion_to_solving_general_3cnf(D, admissible_col):
+    def _conversion_to_solving_general_3cnf(D, admissible_col, opt):
         """
         Converts a dataset into a 3-CNF MaxSAT formulation.
 
@@ -183,37 +178,64 @@ class ProxyRepairMaxSat:
 
         Returns
         -------
-        tuple
-            (soft_clauses, hard_clauses, D_star)
+            D_star
         """
-        soft_clauses = set()
-        hard_clauses = set()
+        var_cache = {}
 
-        # Step 1: Create D_star
+        def v(t):
+            if t not in var_cache:
+                var_cache[t] = Bool(f"x_{t}")
+            return var_cache[t]
+
+        D_set = set(D)
+
         if admissible_col is not None:
-            group_by_a = defaultdict(list)
+            by_a = defaultdict(lambda: (set(), set()))
             for s, o, a in D:
-                group_by_a[a].append((s, o))
-            D_star = {
-                (s1, o2, a)
-                for a, pairs in group_by_a.items()
-                for s1, _ in pairs
-                for _, o2 in pairs
-            }
-        else:
-            D_star = {
-                (s1, o2)
-                for s1, _ in D
-                for _, o2 in D
-            }
+                S_set, O_set = by_a[a]
+                S_set.add(s)
+                O_set.add(o)
 
-        # Step 2: Create soft clauses for each tuple
-        for t in D_star:
-            x_t = Bool(f"x_{t}")
-            if t in D:
-                soft_clauses.add(x_t)
-            else:
-                soft_clauses.add(Not(x_t))
+            D_star = set()
+            for a, (S_set, O_set) in by_a.items():
+                for s in S_set:
+                    for o in O_set:
+                        t = (s, o, a)
+                        D_star.add(t)
+                        x_t = v(t)
+                        opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
+
+            for a, (S_set, O_set) in by_a.items():
+                pairs = [(s, o) for s in S_set for o in O_set]
+                for (s1, o1), (s2, o2) in combinations(pairs, 2):
+                    if s1 == s2 or o1 == o2:
+                        continue
+                    t1 = (s1, o1, a)
+                    t2 = (s2, o2, a)
+                    t3 = (s1, o2, a)
+                    opt.add(Or(Not(v(t1)), Not(v(t2)), v(t3)))
+        else:
+            S_set = {s for (s, _) in D}
+            O_set = {o for (_, o) in D}
+
+            D_star = set()
+            for s in S_set:
+                for o in O_set:
+                    t = (s, o)
+                    D_star.add(t)
+                    x_t = v(t)
+                    opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
+
+            pairs = [(s, o) for s in S_set for o in O_set]
+            for (s1, o1), (s2, o2) in combinations(pairs, 2):
+                if s1 == s2 or o1 == o2:
+                    continue
+                t1 = (s1, o1)
+                t2 = (s2, o2)
+                t3 = (s1, o2)
+                opt.add(Or(Not(v(t1)), Not(v(t2)), v(t3)))
+
+        return D_star
 
         # Step 3: Enforce MVD 3CNF constraints
         # OLD MEMORY INEFFICIENT:
@@ -249,37 +271,37 @@ class ProxyRepairMaxSat:
         #         hard_clauses.add(Or(Not(x_t1), Not(x_t2), x_t3))
         #         used_keys.add(key)
         # ----------------------------------------------------------------------------------------------------
-        # NEW MEMORY EFFICIENT:
-        if admissible_col is not None:
-            # group unique (s,o) pairs by each admissible value a
-            group_by_a_star = defaultdict(set)
-            for (s, o, a) in D_star:
-                group_by_a_star[a].add((s, o))
-
-            for a, pairs in group_by_a_star.items():
-                uniq_pairs = list(pairs)  # unique (s,o) for this a
-                for (s1, o1), (s2, o2) in combinations(uniq_pairs, 2):
-                    if s1 == s2 or o1 == o2:
-                        continue
-                    t1 = (s1, o1, a)
-                    t2 = (s2, o2, a)
-                    t3 = (s1, o2, a)
-                    x_t1 = Bool(f"x_{t1}")
-                    x_t2 = Bool(f"x_{t2}")
-                    x_t3 = Bool(f"x_{t3}")
-                    hard_clauses.add(Or(Not(x_t1), Not(x_t2), x_t3))
-        else:
-            # unconditional: unique (s,o) pairs across all D_star
-            uniq_pairs = list(set(D_star))  # D_star already contains (s,o)
-            for (s1, o1), (s2, o2) in combinations(uniq_pairs, 2):
-                if s1 == s2 or o1 == o2:
-                    continue
-                t1 = (s1, o1)
-                t2 = (s2, o2)
-                t3 = (s1, o2)
-                x_t1 = Bool(f"x_{t1}")
-                x_t2 = Bool(f"x_{t2}")
-                x_t3 = Bool(f"x_{t3}")
-                hard_clauses.add(Or(Not(x_t1), Not(x_t2), x_t3))
-
-        return soft_clauses, hard_clauses, D_star
+        # OLD MEMORY EFFICIENT:
+        # if admissible_col is not None:
+        #     # group unique (s,o) pairs by each admissible value a
+        #     group_by_a_star = defaultdict(set)
+        #     for (s, o, a) in D_star:
+        #         group_by_a_star[a].add((s, o))
+        #
+        #     for a, pairs in group_by_a_star.items():
+        #         uniq_pairs = list(pairs)  # unique (s,o) for this a
+        #         for (s1, o1), (s2, o2) in combinations(uniq_pairs, 2):
+        #             if s1 == s2 or o1 == o2:
+        #                 continue
+        #             t1 = (s1, o1, a)
+        #             t2 = (s2, o2, a)
+        #             t3 = (s1, o2, a)
+        #             x_t1 = Bool(f"x_{t1}")
+        #             x_t2 = Bool(f"x_{t2}")
+        #             x_t3 = Bool(f"x_{t3}")
+        #             hard_clauses.add(Or(Not(x_t1), Not(x_t2), x_t3))
+        # else:
+        #     # unconditional: unique (s,o) pairs across all D_star
+        #     uniq_pairs = list(set(D_star))  # D_star already contains (s,o)
+        #     for (s1, o1), (s2, o2) in combinations(uniq_pairs, 2):
+        #         if s1 == s2 or o1 == o2:
+        #             continue
+        #         t1 = (s1, o1)
+        #         t2 = (s2, o2)
+        #         t3 = (s1, o2)
+        #         x_t1 = Bool(f"x_{t1}")
+        #         x_t2 = Bool(f"x_{t2}")
+        #         x_t3 = Bool(f"x_{t3}")
+        #         hard_clauses.add(Or(Not(x_t1), Not(x_t2), x_t3))
+        #
+        # return soft_clauses, hard_clauses, D_star
