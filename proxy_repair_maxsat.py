@@ -73,15 +73,10 @@ class ProxyRepairMaxSat:
                 continue
             model = opt.model()
 
-            # Compute DR = satisfying assignment
-            DR = set()
-            for t in D_star:
-                if model.evaluate(Bool(f"x_{t}")):
-                    DR.add(t)
-
             # repair = number of mismatched tuples
-            list_symmetric_difference = [row for row in D if row not in DR] + [row for row in DR if row not in D]
-            repair += len(list_symmetric_difference)
+            D_set = set(D)
+            DR = {t for t in D_star if model.evaluate(Bool(f"x_{t}"))}
+            repair += len(D_set.symmetric_difference(DR))
 
         if epsilon is not None:
             sensitivity = 2 * len(fairness_criteria)
@@ -121,38 +116,28 @@ class ProxyRepairMaxSat:
 
           - with admissible_col: (S, (O,ID), A)
           - without admissible_col: (S, (O,ID))
-
-        Parameters
-        ----------
-        df : pandas.DataFrame
-        cols : list[str]
-            [protected_col, response_col] (+ [admissible_col] if present)
-
-        Returns
-        -------
-        list[tuple]
-            List of tuples suitable for _conversion_to_solving_general_3cnf.
         """
-        df_local = df[cols].copy()
-        df_local["ID"] = df_local.groupby(cols).cumcount() + 1
+        # Just select the columns; no need to copy unless you’re going to mutate
+        df_local = df[cols]
+
+        # local ID 1..n for each distinct (S,O[,A])
+        ids = df_local.groupby(cols).cumcount().to_numpy() + 1
 
         s_col, o_col = cols[0], cols[1]
-        ids = df_local["ID"].to_numpy()
         s_vals = df_local[s_col].to_numpy()
         o_vals = df_local[o_col].to_numpy()
 
         if len(cols) == 3:
             a_col = cols[2]
             a_vals = df_local[a_col].to_numpy()
-            # Build list of tuples without iterrows
             D = [
-                (s_vals[i], (o_vals[i], ids[i]), a_vals[i])
-                for i in range(len(df_local))
+                (s, (o, i), a)
+                for s, o, i, a in zip(s_vals, o_vals, ids, a_vals)
             ]
         else:
             D = [
-                (s_vals[i], (o_vals[i], ids[i]))
-                for i in range(len(df_local))
+                (s, (o, i))
+                for s, o, i in zip(s_vals, o_vals, ids)
             ]
 
         return D
