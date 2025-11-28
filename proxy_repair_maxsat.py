@@ -50,10 +50,7 @@ class ProxyRepairMaxSat:
             The estimated repair value (possibly noised).
         """
         start_time = time.time()
-
-        soft_clauses = []
-        hard_clauses = set()
-        D_star = set()
+        repair = 0
 
         for criterion in fairness_criteria:
             if len(criterion) not in [2, 3]:
@@ -68,36 +65,31 @@ class ProxyRepairMaxSat:
                 df = self.dataset
 
             D = list(df[cols].itertuples(index=False, name=None))
-            D_shortened = list(set(D))
+            soft_clauses, hard_clauses, D_star = (
+                self._conversion_to_solving_general_3cnf(D, admissible_col))
 
-            soft_clauses_for_criterion, hard_clauses_for_criterion, D_star_for_criterion = (
-                self._conversion_to_solving_general_3cnf(D_shortened, admissible_col))
-            soft_clauses += soft_clauses_for_criterion
-            hard_clauses = hard_clauses.union(hard_clauses_for_criterion)
-            D_star = D_star.union(D_star_for_criterion)
+            opt = Optimize()
+            # Add constraints to the optimizer
+            for clause in soft_clauses:
+                opt.add_soft(clause, weight=1)
+            for clause in hard_clauses:
+                opt.add(clause)
 
-        opt = Optimize()
-        # Add constraints to the optimizer
-        for clause in soft_clauses:
-            opt.add_soft(clause, weight=1)
-        for clause in hard_clauses:
-            opt.add(clause)
+            if opt.check() != sat:
+                print("No satisfying assignment found.")
+                continue
 
-        if opt.check() != sat:
-            print("No satisfying assignment found")
-            return
+            model = opt.model()
 
-        model = opt.model()
+            # Compute DR = satisfying assignment
+            DR = set()
+            for t in D_star:
+                if model.evaluate(Bool(f"x_{t}")):
+                    DR.add(t)
 
-        # Compute DR = satisfying assignment
-        DR = set()
-        for t in D_star:
-            if model.evaluate(Bool(f"x_{t}")):
-                DR.add(t)
-
-        # repair = number of mismatched tuples
-        list_symmetric_difference = [row for row in D if row not in DR] + [row for row in DR if row not in D]
-        repair = len(list_symmetric_difference)
+            # repair = number of mismatched tuples
+            list_symmetric_difference = [row for row in D if row not in DR] + [row for row in DR if row not in D]
+            repair += len(list_symmetric_difference)
 
         if epsilon is not None:
             sensitivity = 2 * len(fairness_criteria)
