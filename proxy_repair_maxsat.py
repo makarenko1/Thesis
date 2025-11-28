@@ -85,7 +85,7 @@ class ProxyRepairMaxSat:
         elapsed_time = time.time() - start_time
         print(
             f"Repair MaxSAT: Proxy Repair MaxSAT for fairness criteria {fairness_criteria}: "
-            f"{repair:.4f} with data size: {len(self.dataset)} and epsilon: "
+            f"{repair} with data size: {len(self.dataset)} and epsilon: "
             f"{epsilon if epsilon is not None else 'infinity'}. Calculation took {elapsed_time:.3f} seconds."
         )
         return repair
