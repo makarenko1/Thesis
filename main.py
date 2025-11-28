@@ -2309,20 +2309,19 @@ def run_experiment_8_unconditional(
 #     os.makedirs(os.path.dirname(outfile), exist_ok=True)
 #     table_all.to_excel(outfile, merge_cells=True)
 
-adult_criteria = [["sex", "income>50K", "education-num"], ["sex", "income>50K", "hours-per-week"],
-                  ["sex", "marital-status", "education-num"], ["sex", "marital-status", "hours-per-week"]]
+adult_criteria = [["sex", "income>50K"], ["race", "income>50K"],
+                  ["sex", "marital-status"], ["race", "marital-status"]]
 
-census_criteria = [["HEALTH", "INCTOT", "EDUC"], ["HEALTH", "OCC", "EDUC"], ["HEALTH", "MARST", "AGE"],
-                   ["HEALTH", "INCTOT", "AGE"]]
+census_criteria = [["HEALTH", "INCTOT"], ["HEALTH", "OCC"], ["HEALTH", "MARST"]]
 
-stackoverflow_criteria = [["Country", "RemoteWork", "Employment"], ["Age", "PurchaseInfluence", "OrgSize"],
-                          ["Country", "MainBranch", "YearsCodePro"], ["Age", "MainBranch", "EdLevel"]]
+stackoverflow_criteria = [["Country", "RemoteWork"], ["Age", "PurchaseInfluence"],
+                          ["Country", "MainBranch"], ["Age", "MainBranch"]]
 
-compas_criteria = [["race", "is_recid", "age_cat"], ["sex", "is_recid", "priors_count"],
-                   ["race", "decile_score", "c_charge_degree"], ["sex", "v_decile_score", "age_cat"]]
+compas_criteria = [["race", "is_recid"], ["sex", "is_recid"],
+                   ["race", "decile_score"], ["sex", "v_decile_score"]]
 
-healthcare_criteria = [["race", "complications", "age_group"], ["smoker", "complications", "age_group"],
-                       ["race", "income", "county"], ["smoker", "income", "num_children"]]
+healthcare_criteria = [["race", "complications"], ["smoker", "complications"],
+                       ["race", "income"], ["smoker", "income"]]
 
 datasets = {
     "Adult": {
@@ -2349,35 +2348,26 @@ datasets = {
 
 
 def run_experiment_7(
-        epsilon: Optional[float] = 1.0,
-        num_tuples: int = 100000,
+        epsilon: Optional[float] = None,
+        num_tuples: int = 10000,
         repetitions: int = 5,
         outfile: str = "plots/experiment7",
 ):
-
-    # ===== Global rows for table =====
     all_rows = []
     all_index = []
 
-    # === Loop over datasets and criteria ===
     for ds_name, spec in datasets.items():
         path = spec["path"]
         criteria = spec["criteria"]
 
-        print(f"\n=== DATASET (exp7): {ds_name} ===")
-
         for criterion in criteria:
             data = _encode_and_clean(path, criterion)
             n = min(num_tuples, len(data))
-
-            # nicely formatted label, including admissible if present
             if len(criterion) >= 3:
                 crit_label = f"{criterion[0]} , {criterion[1]} | {criterion[2]}"
             else:
                 crit_label = f"{criterion[0]} , {criterion[1]}"
             crit_label = crit_label.lower()
-
-            # measures accumulators over repetitions
             sum_tvd = 0.0
             sum_repair = 0.0
             sum_tc = 0.0
@@ -2385,22 +2375,18 @@ def run_experiment_7(
             for rep in range(repetitions):
                 sample = data.sample(n=n, replace=False)
                 tvd_proxy = ProxyMutualInformationTVD(data=sample)
-
                 sum_tvd += float(
                     tvd_proxy.calculate([criterion], epsilon=epsilon)
                 )
-
                 repair_proxy = ProxyRepairMaxSat(data=sample)
                 sum_repair += float(
                     repair_proxy.calculate([criterion], epsilon=epsilon)
                 )
-
                 tc_proxy = TupleContribution(data=sample)
                 sum_tc += float(
                     tc_proxy.calculate([criterion], epsilon=epsilon)
                 )
 
-            # average over repetitions
             tvd_avg = sum_tvd / repetitions
             repair_avg = sum_repair / repetitions
             tc_avg = sum_tc / repetitions
@@ -2412,28 +2398,16 @@ def run_experiment_7(
             ])
             all_index.append((ds_name, crit_label))
 
-    # ===== Build one big table with row MultiIndex (Dataset, Criterion) =====
     row_index = pd.MultiIndex.from_tuples(all_index, names=["Dataset", "Criterion"])
     col_index = pd.MultiIndex.from_tuples([
         ("ProxyMutualInformationTVD", ""),
         ("RepairMaxSat", ""),
         ("TupleContribution", ""),
     ])
-
     table_all = pd.DataFrame(all_rows, index=row_index, columns=col_index)
-
-    # ---------- Histogram-style bar plot ----------
-    # Sort criteria by ProxyMutualInformationTVD
-    main_col = ("ProxyMutualInformationTVD", "")
-    main_vals = table_all[main_col].to_numpy(dtype=float)
-    order = np.argsort(main_vals)  # ascending
-
     crit_labels = [f"{ds} | {crit}" for ds, crit in table_all.index]
-    crit_labels = [crit_labels[i] for i in order]
-
     x = np.arange(len(table_all))
     width = 0.22
-
     measure_cols = [
         ("ProxyMutualInformationTVD", ""),
         ("RepairMaxSat", ""),
@@ -2441,26 +2415,26 @@ def run_experiment_7(
     ]
     labels = ["TVD", "RepairMaxSat", "TupleContribution"]
     offsets = [-width, 0.0, width]
-
     fig, ax = plt.subplots(figsize=(max(8, len(table_all) * 0.3), 4))
 
     for offset, label, col in zip(offsets, labels, measure_cols):
-        vals = table_all[col].to_numpy(dtype=float)[order]
+        vals = table_all[col].to_numpy(dtype=float)
         ax.bar(x + offset, vals, width, label=label)
 
     ax.set_xticks(x)
     ax.set_xticklabels(crit_labels, rotation=45, ha="right", fontsize=7)
-    ax.set_ylabel("Measure value")
-    ax.set_title("Proxy Mutual Information TVD, Proxy RepairMaxSat, Tuple Contribution per Criterion", fontsize=10)
+    ax.set_yscale('log')
+    ax.set_ylabel("Measure value (log scale)")
+    ax.set_title(
+        "Proxy Mutual Information TVD, Proxy RepairMaxSat, Tuple Contribution per Criterion",
+        fontsize=10,
+    )
     ax.legend(fontsize=8)
     plt.tight_layout()
-
     png_outfile = outfile + ".png"
     os.makedirs(os.path.dirname(png_outfile), exist_ok=True)
     plt.savefig(png_outfile, dpi=256, bbox_inches="tight")
     plt.show()
-
-    # print without truncation
     with pd.option_context(
         "display.max_rows", None,
         "display.max_columns", None,
@@ -2469,9 +2443,8 @@ def run_experiment_7(
     ):
         print("\n=== Experiment 7 (averaged, rounded to 4 decimals) ===")
         print(table_all)
-
     os.makedirs(os.path.dirname(outfile + ".xlsx"), exist_ok=True)
-    table_all.to_excel(outfile + ".xslx", merge_cells=True)
+    table_all.to_excel(outfile + ".xlsx", merge_cells=True)
 
 
 if __name__ == "__main__":
