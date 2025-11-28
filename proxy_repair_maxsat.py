@@ -112,15 +112,12 @@ class ProxyRepairMaxSat:
     def _add_id(df, cols):
         """
         Adds a local ID per distinct (S,O[,A]) and returns tuples for
-        the MVD S, (O,ID) | A:
+        the MVD S, O, ID | A:
 
-          - with admissible_col: (S, (O,ID), A)
-          - without admissible_col: (S, (O,ID))
+          - with admissible_col: (S, O, A, ID)
+          - without admissible_col: (S, O, ID)
         """
-        # Just select the columns; no need to copy unless you’re going to mutate
         df_local = df[cols]
-
-        # local ID 1..n for each distinct (S,O[,A])
         ids = df_local.groupby(cols).cumcount().to_numpy() + 1
 
         s_col, o_col = cols[0], cols[1]
@@ -130,17 +127,15 @@ class ProxyRepairMaxSat:
         if len(cols) == 3:
             a_col = cols[2]
             a_vals = df_local[a_col].to_numpy()
-            D = [
-                (s, (o, i), a)
-                for s, o, i, a in zip(s_vals, o_vals, ids, a_vals)
+            return [
+                (s, o, a, i)
+                for s, o, a, i in zip(s_vals, o_vals, a_vals, ids)
             ]
         else:
-            D = [
-                (s, (o, i))
+            return [
+                (s, o, i)
                 for s, o, i in zip(s_vals, o_vals, ids)
             ]
-
-        return D
 
     @staticmethod
     def _clause_key(t1, t2, t3):
@@ -175,50 +170,59 @@ class ProxyRepairMaxSat:
         D_set = set(D)
 
         if admissible_col is not None:
+            # D elements: (s, o, a, id)
             by_a = defaultdict(lambda: (set(), set()))
-            for s, o, a in D:
+            for s, o, a, i in D:
                 S_set, O_set = by_a[a]
                 S_set.add(s)
-                O_set.add(o)
+                O_set.add((o, i))  # treat (o, id) as the "O-slot" value
 
             D_star = set()
             for a, (S_set, O_set) in by_a.items():
                 for s in S_set:
-                    for o in O_set:
-                        t = (s, o, a)
+                    for (o, i) in O_set:
+                        t = (s, o, a, i)  # canonical flat key
                         D_star.add(t)
                         x_t = v(t)
                         opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
 
+            # hard clauses
             for a, (S_set, O_set) in by_a.items():
-                pairs = [(s, o) for s in S_set for o in O_set]
-                for (s1, o1), (s2, o2) in combinations(pairs, 2):
-                    if s1 == s2 or o1 == o2:
+                pairs = list(O_set)  # each is (o, id)
+                for (o1, i1), (o2, i2) in combinations(pairs, 2):
+                    if (o1, i1) == (o2, i2):  # redundant but explicit
                         continue
-                    t1 = (s1, o1, a)
-                    t2 = (s2, o2, a)
-                    t3 = (s1, o2, a)
-                    opt.add(Or(Not(v(t1)), Not(v(t2)), v(t3)))
+                    for s1, s2 in combinations(S_set, 2):
+                        if s1 == s2:
+                            continue
+                        t1 = (s1, o1, a, i1)
+                        t2 = (s2, o2, a, i2)
+                        t3 = (s1, o2, a, i2)
+                        opt.add(Or(Not(v(t1)), Not(v(t2)), v(t3)))
         else:
-            S_set = {s for (s, _) in D}
-            O_set = {o for (_, o) in D}
+            # D elements: (s, o, id)
+            S_set = {s for (s, o, i) in D}
+            O_set = {(o, i) for (s, o, i) in D}
 
             D_star = set()
             for s in S_set:
-                for o in O_set:
-                    t = (s, o)
+                for (o, i) in O_set:
+                    t = (s, o, i)
                     D_star.add(t)
                     x_t = v(t)
                     opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
 
-            pairs = [(s, o) for s in S_set for o in O_set]
-            for (s1, o1), (s2, o2) in combinations(pairs, 2):
-                if s1 == s2 or o1 == o2:
+            pairs = list(O_set)
+            for (o1, i1), (o2, i2) in combinations(pairs, 2):
+                if (o1, i1) == (o2, i2):
                     continue
-                t1 = (s1, o1)
-                t2 = (s2, o2)
-                t3 = (s1, o2)
-                opt.add(Or(Not(v(t1)), Not(v(t2)), v(t3)))
+                for s1, s2 in combinations(S_set, 2):
+                    if s1 == s2:
+                        continue
+                    t1 = (s1, o1, i1)
+                    t2 = (s2, o2, i2)
+                    t3 = (s1, o2, i2)
+                    opt.add(Or(Not(v(t1)), Not(v(t2)), v(t3)))
 
         return D_star
 
