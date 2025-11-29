@@ -418,7 +418,7 @@ def plot_legend(outfile="plots/legend_proxies.png"):
 
 
 def run_experiment_1(
-    epsilon=None,
+    epsilon=1.0,
     repetitions=5,
     outfile="plots/experiment1.png"
 ):
@@ -459,16 +459,10 @@ def run_experiment_1(
         }
 
         for measure_name, measure_cls in measures.items():
-            if measure_name == "Proxy RepairMaxSat" and path == "data/census.csv":  # this dataset timeouted whole
-                for _ in num_tuples_this_dataset:
-                    results[measure_name]["mean"].append(np.nan)
-                    results[measure_name]["min"].append(np.nan)
-                    results[measure_name]["max"].append(np.nan)
-                continue
-
             flag_timeout = False
             for num_tuples in num_tuples_this_dataset:
-                if flag_timeout:
+                if flag_timeout or (measure_name == "Proxy RepairMaxSat" and path == "data/census.csv" and
+                                    num_tuples > 100000):
                     print("Skipping iteration due to timeout.")
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
@@ -593,12 +587,6 @@ def run_experiment_2(
             flag_timeout = False
 
             for num_criteria in range(1, len(criteria) + 1):
-                if measure_name == "Proxy RepairMaxSat" and path == "data/census.csv":  # this dataset timeouted
-                    results[measure_name]["mean"].append(np.nan)
-                    results[measure_name]["min"].append(np.nan)
-                    results[measure_name]["max"].append(np.nan)
-                    continue
-
                 if flag_timeout:
                     print("Skipping next iterations because got timeout for smaller number of criteria.")
                     results[measure_name]["mean"].append(np.nan)
@@ -716,13 +704,7 @@ def run_experiment_3(
         }
 
         for measure_name, measure_cls in measures.items():
-            if measure_name == "Proxy RepairMaxSat" and path == "data/census.csv":
-                for _ in epsilons:
-                    results[measure_name]["mean"].append(np.nan)
-                    results[measure_name]["min"].append(np.nan)
-                    results[measure_name]["max"].append(np.nan)
-                continue
-
+            flag_timeout = False
             errs_per_eps = [[] for _ in epsilons]
             for _ in range(repetitions):
                 if n < len(data_full):
@@ -737,9 +719,13 @@ def run_experiment_3(
                         ).result(timeout=timeout_seconds)
                     except TimeoutError:
                         print("Skipping iteration due to timeout.")
-                        continue
+                        flag_timeout = True
+                        break
 
                 for j, eps in enumerate(epsilons):
+                    if flag_timeout:
+                        errs_per_eps[j].append(np.nan)
+                        continue
                     with ThreadPoolExecutor() as executor:
                         try:
                             private_result = executor.submit(
@@ -749,6 +735,7 @@ def run_experiment_3(
                             errs_per_eps[j].append(err)
                         except TimeoutError:
                             print("Skipping iteration due to timeout.")
+                            flag_timeout = True
                             continue
 
             for j in range(len(epsilons)):
@@ -1194,11 +1181,6 @@ def run_experiment_6(
     plt.show()
 
 
-from typing import List
-import numpy as np
-import pandas as pd
-from sklearn.preprocessing import LabelEncoder
-
 def _encode_and_clean_dp(data_path: str, criterion_cols: List[str]) -> pd.DataFrame:
     """
     DP-specific cleaner.
@@ -1381,14 +1363,14 @@ def run_experiment_7(
             sample = data_full.sample(n=n, replace=False)
             sample_measures = sample[criterion]
 
-            tvd_proxy = ProxyMutualInformationTVD(data=sample_measures)
-            sum_tvd += float(tvd_proxy.calculate([criterion], epsilon=epsilon))
-
-            repair_proxy = ProxyRepairMaxSat(data=sample_measures)
-            sum_repair += float(repair_proxy.calculate([criterion], epsilon=epsilon))
-
-            tc_proxy = TupleContribution(data=sample_measures)
-            sum_tc += float(tc_proxy.calculate([criterion], epsilon=epsilon))
+            # tvd_proxy = ProxyMutualInformationTVD(data=sample_measures)
+            # sum_tvd += float(tvd_proxy.calculate([criterion], epsilon=epsilon))
+            #
+            # repair_proxy = ProxyRepairMaxSat(data=sample_measures)
+            # sum_repair += float(repair_proxy.calculate([criterion], epsilon=epsilon))
+            #
+            # tc_proxy = TupleContribution(data=sample_measures)
+            # sum_tc += float(tc_proxy.calculate([criterion], epsilon=epsilon))
 
             protected_col, response_col = criterion[0], criterion[1]
             sum_dp += demographic_parity_gap_with_model(
@@ -1419,42 +1401,51 @@ def run_experiment_7(
     subplot_colors = ["tab:blue", "tab:orange", "tab:green"]
 
     # ---------- main three metrics ----------
-    fig, axes = plt.subplots(
-        nrows=1,
-        ncols=3,
-        figsize=(max(8, num_criteria * 1.5), 3.5),
-        sharex=True
-    )
-    all_rows_np = np.array(all_rows, dtype=float)
-
-    for ax, mlabel, col_idx, color in zip(axes, measure_labels, [0, 1, 2], subplot_colors):
-        vals = all_rows_np[:, col_idx]
-        ax.bar(x, vals, color=color)
-        ax.set_yscale('log')
-        ax.set_title(mlabel)
-        ax.set_xticks(x)
-        ax.set_xticklabels(criterion_numbers)
-
-    for ax in axes:
-        ax.set_xlabel("criterion")
-
-    plt.tight_layout(rect=[0, 0, 1, 0.9])
-
-    dir_name = os.path.dirname(outfile)
-    if dir_name:
-        os.makedirs(dir_name, exist_ok=True)
-    plt.savefig(outfile, dpi=256, bbox_inches="tight")
-    plt.show()
+    # fig, axes = plt.subplots(
+    #     nrows=1,
+    #     ncols=3,
+    #     figsize=(max(8, num_criteria * 1.5), 3.5),
+    #     sharex=True
+    # )
+    # all_rows_np = np.array(all_rows, dtype=float)
+    #
+    # for ax, mlabel, col_idx, color in zip(axes, measure_labels, [0, 1, 2], subplot_colors):
+    #     vals = all_rows_np[:, col_idx]
+    #     ax.bar(x, vals, color=color)
+    #     ax.set_yscale('log')
+    #     ax.set_title(mlabel)
+    #     ax.set_xticks(x)
+    #     ax.set_xticklabels(criterion_numbers)
+    #
+    # for ax in axes:
+    #     ax.set_xlabel("criterion")
+    #
+    # plt.tight_layout(rect=[0, 0, 1, 0.9])
+    #
+    # dir_name = os.path.dirname(outfile)
+    # if dir_name:
+    #     os.makedirs(dir_name, exist_ok=True)
+    # plt.savefig(outfile, dpi=256, bbox_inches="tight")
+    # plt.show()
 
     # ---------- demographic parity plot ----------
-    dp_outfile = f"{outfile}_dp.png"
-    fig_dp, ax_dp = plt.subplots(figsize=(6, 4))
+
+    plt.rcParams.update({
+        "axes.titlesize": 18,
+        "axes.labelsize": 18,
+        "xtick.labelsize": 16,
+        "ytick.labelsize": 16,
+        "figure.titlesize": 18,
+    })
+
+    dp_outfile = f"{outfile.split('.')[0]}_dp.png"
+    fig_dp, ax_dp = plt.subplots(figsize=(3.5, 3.5))
     dp_vals_np = np.array(dp_values, dtype=float)
     ax_dp.bar(x, dp_vals_np, color="tab:purple")
     ax_dp.set_xticks(x)
     ax_dp.set_xticklabels(criterion_numbers)
     ax_dp.set_xlabel("criterion")
-    ax_dp.set_ylabel("Demographic Parity gap")
+    fig_dp.suptitle("Demographic Parity\ngap")
 
     plt.tight_layout()
     dp_dir = os.path.dirname(dp_outfile)

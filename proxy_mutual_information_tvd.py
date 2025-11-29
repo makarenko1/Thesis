@@ -105,8 +105,8 @@ class ProxyMutualInformationTVD:
         float
             The proxy MI value for the given attribute pair.
         """
-        num_s = np.max(protected_col_values) + 1
-        num_o = np.max(response_col_values) + 1
+        num_s = int(np.max(protected_col_values)) + 1
+        num_o = int(np.max(response_col_values)) + 1
         joint = np.zeros((num_s, num_o))
         for s, o in zip(protected_col_values, response_col_values):
             joint[s, o] += 1
