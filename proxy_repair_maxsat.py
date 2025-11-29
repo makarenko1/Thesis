@@ -36,7 +36,7 @@ class ProxyRepairMaxSat:
         fairness_criteria,
         epsilon=None,
         encode_and_clean=False,
-        soft_clause_ratio: float = 0.5,
+        chunk_size: int = 100,
     ):
         """
         Computes the proxy repair measure using a MaxSAT solver.
@@ -46,7 +46,11 @@ class ProxyRepairMaxSat:
 
         The method encodes tuples as Boolean variables, builds soft and hard
         3-CNF clauses for each criterion, and solves the combined MaxSAT
-        optimization. The resulting repair value represents the number of
+        optimization. To improve scalability, the data is processed in
+        chunks of `chunk_size` rows per criterion, and the repair values
+        are summed across chunks.
+
+        The resulting repair value represents the (approximate) number of
         tuple changes required for fairness. If epsilon is given, Laplace
         noise is added for privacy.
 
@@ -55,21 +59,16 @@ class ProxyRepairMaxSat:
         fairness_criteria : list[list[str]]
         epsilon : float or None
         encode_and_clean : bool
-        soft_clause_ratio : float, default 0.5
-            Fraction of soft clauses to actually add to the solver.
-            1.0 = use all soft clauses (original behavior),
-            0.5 = use ~50% of soft clauses (randomly sampled).
+        chunk_size : int, default 100
+            Number of rows per chunk for the MaxSAT subproblems.
 
         Returns
         -------
         float
             The estimated repair value (possibly noised).
         """
-        # Clamp ratio to [0, 1]
-        soft_clause_ratio = max(0.0, min(1.0, soft_clause_ratio))
-
         start_time = time.time()
-        repair = 0
+        total_repair = 0
 
         for criterion in fairness_criteria:
             if len(criterion) not in [2, 3]:
@@ -83,38 +82,56 @@ class ProxyRepairMaxSat:
             cols = [protected_col, response_col] + (
                 [admissible_col] if admissible_col is not None else []
             )
+
+            # Prepare the base dataframe for this criterion
             if encode_and_clean:
-                df = self._encode_and_clean(self.dataset, cols)
+                df_base = self._encode_and_clean(self.dataset, cols)
             else:
-                df = self.dataset
-            D = self._add_id(df, cols)
+                df_base = self.dataset[cols]
 
-            opt = Optimize()
-            D_star = self._conversion_to_solving_general_3cnf(
-                D, admissible_col, opt, soft_clause_ratio
-            )
-            if opt.check() != sat:
-                print("No satisfying assignment found.")
-                continue
-            model = opt.model()
+            n_rows = len(df_base)
+            # Process data in chunks of `chunk_size`
+            for start in range(0, n_rows, chunk_size):
+                end = start + chunk_size
+                df_chunk = df_base.iloc[start:end]
 
-            # repair = number of mismatched tuples
-            D_set = set(D)
-            DR = {t for t in D_star if model.evaluate(Bool(f"x_{t}"))}
-            repair += len(D_set.symmetric_difference(DR))
+                if df_chunk.empty:
+                    continue
+
+                D = self._add_id(df_chunk, cols)
+
+                opt = Optimize()
+                D_star = self._conversion_to_solving_general_3cnf(
+                    D, admissible_col, opt
+                )
+                if opt.check() != sat:
+                    print(
+                        f"No satisfying assignment found for criterion {criterion} "
+                        f"in chunk {start}:{end}."
+                    )
+                    continue
+                model = opt.model()
+
+                # repair = number of mismatched tuples for this chunk
+                D_set = set(D)
+                DR = {t for t in D_star if model.evaluate(Bool(f"x_{t}"))}
+                chunk_repair = len(D_set.symmetric_difference(DR))
+                total_repair += chunk_repair
 
         if epsilon is not None:
             sensitivity = 2 * len(fairness_criteria)
-            repair = repair + np.random.laplace(loc=0, scale=sensitivity / epsilon)
+            total_repair = total_repair + np.random.laplace(
+                loc=0, scale=sensitivity / epsilon
+            )
 
         elapsed_time = time.time() - start_time
         print(
-            f"Repair MaxSAT: Proxy Repair MaxSAT for fairness criteria {fairness_criteria}: "
-            f"{repair} with data size: {len(self.dataset)} and epsilon: "
+            f"Repair MaxSAT (chunked): Proxy Repair MaxSAT for fairness criteria {fairness_criteria}: "
+            f"{total_repair} with data size: {len(self.dataset)} and epsilon: "
             f"{epsilon if epsilon is not None else 'infinity'}. "
             f"Calculation took {elapsed_time:.3f} seconds."
         )
-        return repair
+        return total_repair
 
     @staticmethod
     def _encode_and_clean(df, cols):
@@ -173,7 +190,7 @@ class ProxyRepairMaxSat:
         return tuple(sorted([f"x_{t1}", f"x_{t2}", f"x_{t3}"]))
 
     @staticmethod
-    def _conversion_to_solving_general_3cnf(D, admissible_col, opt, soft_clause_ratio: float):
+    def _conversion_to_solving_general_3cnf(D, admissible_col, opt):
         """
         Converts a dataset into a 3-CNF MaxSAT formulation.
 
@@ -181,8 +198,6 @@ class ProxyRepairMaxSat:
           - D_star: the set of all tuple combinations satisfying MVD structure
           - Soft clauses: one per tuple, encouraging consistency with the data
           - Hard clauses: 3-CNF constraints enforcing fairness dependencies
-
-        Only a fraction `soft_clause_ratio` of soft clauses are added.
 
         Returns
         -------
@@ -212,16 +227,9 @@ class ProxyRepairMaxSat:
                         t = (s, o, a, i)  # canonical flat key
                         D_star.add(t)
                         x_t = v(t)
-                        # Add soft clause with probability soft_clause_ratio
-                        if soft_clause_ratio <= 0.0 or soft_clause_ratio >= 1.0:
-                            # fast path for 0 or 1
-                            if soft_clause_ratio == 1.0:
-                                opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
-                        else:
-                            if np.random.random() < soft_clause_ratio:
-                                opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
+                        opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
 
-            # hard clauses (always all)
+            # hard clauses
             for a, (S_set, O_set) in by_a.items():
                 pairs = list(O_set)  # each is (o, id)
                 for (o1, i1), (o2, i2) in combinations(pairs, 2):
@@ -245,12 +253,7 @@ class ProxyRepairMaxSat:
                     t = (s, o, i)
                     D_star.add(t)
                     x_t = v(t)
-                    if soft_clause_ratio <= 0.0 or soft_clause_ratio >= 1.0:
-                        if soft_clause_ratio == 1.0:
-                            opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
-                    else:
-                        if np.random.random() < soft_clause_ratio:
-                            opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
+                    opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
 
             pairs = list(O_set)
             for (o1, i1), (o2, i2) in combinations(pairs, 2):
