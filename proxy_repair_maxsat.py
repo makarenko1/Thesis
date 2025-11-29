@@ -36,7 +36,8 @@ class ProxyRepairMaxSat:
         fairness_criteria,
         epsilon=None,
         encode_and_clean=False,
-        soft_clause_ratio: float = 0.5,
+        chunk_size: int | None = 100,
+        soft_clauses_percentage: float = 1.0,
     ):
         """
         Computes the proxy repair measure using a MaxSAT solver.
@@ -46,17 +47,18 @@ class ProxyRepairMaxSat:
 
         The method encodes tuples as Boolean variables, builds soft and hard
         3-CNF clauses for each criterion, and solves the combined MaxSAT
-        optimization. The resulting repair value represents the number of
-        tuple changes required for fairness. If epsilon is given, Laplace
-        noise is added for privacy.
+        optimization.
 
         Parameters
         ----------
         fairness_criteria : list[list[str]]
         epsilon : float or None
         encode_and_clean : bool
-        soft_clause_ratio : float, default 0.5
-            Fraction of soft clauses to actually add to the solver.
+        chunk_size : int or None, default 100
+            If not None, data is processed in chunks of this size (per criterion)
+            and the repair is summed across chunks (approximate).
+        soft_clauses_percentage : float, default 1.0
+            Fraction of soft clauses to add to the solver.
             1.0 = use all soft clauses (original behavior),
             0.5 = use ~50% of soft clauses (randomly sampled).
 
@@ -65,15 +67,15 @@ class ProxyRepairMaxSat:
         float
             The estimated repair value (possibly noised).
         """
-        # Clamp ratio to [0, 1]
-        soft_clause_ratio = max(0.0, min(1.0, soft_clause_ratio))
+        # Clamp percentage to [0, 1]
+        soft_clauses_percentage = max(0.0, min(1.0, soft_clauses_percentage))
 
         start_time = time.time()
-        repair = 0
+        total_repair = 0
 
         for criterion in fairness_criteria:
             if len(criterion) not in [2, 3]:
-                raise ValueError("Invalid input")
+                raise ValueError("Invalid input: each criterion must have 2 or 3 columns")
 
             protected_col, response_col, admissible_col = (
                 criterion[0],
@@ -83,38 +85,76 @@ class ProxyRepairMaxSat:
             cols = [protected_col, response_col] + (
                 [admissible_col] if admissible_col is not None else []
             )
+
+            # Prepare dataframe for this criterion
             if encode_and_clean:
-                df = self._encode_and_clean(self.dataset, cols)
+                df_base = self._encode_and_clean(self.dataset, cols)
             else:
-                df = self.dataset
-            D = self._add_id(df, cols)
+                df_base = self.dataset[cols]
 
-            opt = Optimize()
-            D_star = self._conversion_to_solving_general_3cnf(
-                D, admissible_col, opt, soft_clause_ratio
-            )
-            if opt.check() != sat:
-                print("No satisfying assignment found.")
-                continue
-            model = opt.model()
+            n_rows = len(df_base)
 
-            # repair = number of mismatched tuples
-            D_set = set(D)
-            DR = {t for t in D_star if model.evaluate(Bool(f"x_{t}"))}
-            repair += len(D_set.symmetric_difference(DR))
+            if chunk_size is None:
+                # Single chunk: full data
+                chunk_repair = self._repair_for_df(
+                    df_base, cols, admissible_col, soft_clauses_percentage
+                )
+                total_repair += chunk_repair
+            else:
+                # Multiple chunks
+                for start in range(0, n_rows, chunk_size):
+                    end = start + chunk_size
+                    df_chunk = df_base.iloc[start:end]
+                    if df_chunk.empty:
+                        continue
+                    chunk_repair = self._repair_for_df(
+                        df_chunk, cols, admissible_col, soft_clauses_percentage
+                    )
+                    total_repair += chunk_repair
 
         if epsilon is not None:
             sensitivity = 2 * len(fairness_criteria)
-            repair = repair + np.random.laplace(loc=0, scale=sensitivity / epsilon)
+            total_repair = total_repair + np.random.laplace(
+                loc=0, scale=sensitivity / epsilon
+            )
 
         elapsed_time = time.time() - start_time
         print(
             f"Repair MaxSAT: Proxy Repair MaxSAT for fairness criteria {fairness_criteria}: "
-            f"{repair} with data size: {len(self.dataset)} and epsilon: "
+            f"{total_repair} with data size: {len(self.dataset)} and epsilon: "
             f"{epsilon if epsilon is not None else 'infinity'}. "
             f"Calculation took {elapsed_time:.3f} seconds."
         )
-        return repair
+        return total_repair
+
+    def _repair_for_df(
+        self,
+        df: pd.DataFrame,
+        cols,
+        admissible_col,
+        soft_clauses_percentage: float,
+    ) -> int:
+        """
+        Solve the MaxSAT problem for a single dataframe (full data or a chunk)
+        and return the repair size for that chunk.
+        """
+        D = self._add_id(df, cols)
+        if not D:
+            return 0
+
+        opt = Optimize()
+        D_star = self._conversion_to_solving_general_3cnf(
+            D, admissible_col, opt, soft_clauses_percentage
+        )
+
+        if opt.check() != sat:
+            print("No satisfying assignment found for a chunk/criterion.")
+            return 0
+
+        model = opt.model()
+        D_set = set(D)
+        DR = {t for t in D_star if model.evaluate(Bool(f"x_{t}"))}
+        return len(D_set.symmetric_difference(DR))
 
     @staticmethod
     def _encode_and_clean(df, cols):
@@ -143,25 +183,21 @@ class ProxyRepairMaxSat:
           - with admissible_col: (S, O, A, ID)
           - without admissible_col: (S, O, ID)
         """
-        df_local = df[cols]
-        ids = df_local.groupby(cols).cumcount().to_numpy() + 1
+        df_local = df[cols].copy()
+        df_local["ID"] = df_local.groupby(cols).cumcount() + 1
 
         s_col, o_col = cols[0], cols[1]
-        s_vals = df_local[s_col].to_numpy()
-        o_vals = df_local[o_col].to_numpy()
 
         if len(cols) == 3:
             a_col = cols[2]
-            a_vals = df_local[a_col].to_numpy()
-            return [
-                (s, o, a, i)
-                for s, o, a, i in zip(s_vals, o_vals, a_vals, ids)
-            ]
+            # Use DataFrame -> tuples instead of explicit Python list comprehension join
+            return list(
+                df_local[[s_col, o_col, a_col, "ID"]].itertuples(index=False, name=None)
+            )
         else:
-            return [
-                (s, o, i)
-                for s, o, i in zip(s_vals, o_vals, ids)
-            ]
+            return list(
+                df_local[[s_col, o_col, "ID"]].itertuples(index=False, name=None)
+            )
 
     @staticmethod
     def _clause_key(t1, t2, t3):
@@ -173,21 +209,30 @@ class ProxyRepairMaxSat:
         return tuple(sorted([f"x_{t1}", f"x_{t2}", f"x_{t3}"]))
 
     @staticmethod
-    def _conversion_to_solving_general_3cnf(D, admissible_col, opt, soft_clause_ratio: float):
+    def _conversion_to_solving_general_3cnf(
+        D,
+        admissible_col,
+        opt,
+        soft_clauses_percentage: float,
+    ):
         """
         Converts a dataset into a 3-CNF MaxSAT formulation.
 
         Constructs:
           - D_star: the set of all tuple combinations satisfying MVD structure
+                    (via pandas joins rather than pure Python list comprehensions)
           - Soft clauses: one per tuple, encouraging consistency with the data
           - Hard clauses: 3-CNF constraints enforcing fairness dependencies
 
-        Only a fraction `soft_clause_ratio` of soft clauses are added.
+        Only a fraction `soft_clauses_percentage` of soft clauses are added.
 
         Returns
         -------
-            D_star
+            D_star (set of tuples)
         """
+        if not D:
+            return set()
+
         var_cache = {}
 
         def v(t):
@@ -196,67 +241,105 @@ class ProxyRepairMaxSat:
             return var_cache[t]
 
         D_set = set(D)
+        arr = np.array(D, dtype=object)
 
+        # ----- Build D_star using pandas joins -----
         if admissible_col is not None:
             # D elements: (s, o, a, id)
-            by_a = defaultdict(lambda: (set(), set()))
-            for s, o, a, i in D:
-                S_set, O_set = by_a[a]
-                S_set.add(s)
-                O_set.add((o, i))  # treat (o, id) as the "O-slot" value
+            dfD = pd.DataFrame(arr, columns=["s", "o", "a", "id"])
 
-            D_star = set()
-            for a, (S_set, O_set) in by_a.items():
-                for s in S_set:
-                    for (o, i) in O_set:
-                        t = (s, o, a, i)  # canonical flat key
-                        D_star.add(t)
+            # D_star is union over a of cartesian product S(a) x O(a)
+            dstar_frames = []
+            for a_val, group in dfD.groupby("a"):
+                S_df = group[["s"]].drop_duplicates()
+                O_df = group[["o", "id"]].drop_duplicates()
+                S_df["key"] = 1
+                O_df["key"] = 1
+                cart = S_df.merge(O_df, on="key").drop("key", axis=1)
+                cart["a"] = a_val
+                dstar_frames.append(cart)
+
+            if dstar_frames:
+                D_star_df = pd.concat(dstar_frames, ignore_index=True)
+            else:
+                D_star_df = pd.DataFrame(columns=["s", "o", "a", "id"])
+
+            # Convert D_star_df to set of tuples
+            D_star = set(
+                D_star_df[["s", "o", "a", "id"]].itertuples(index=False, name=None)
+            )
+
+            # Soft clauses (subset controlled by soft_clauses_percentage)
+            if soft_clauses_percentage > 0.0:
+                if soft_clauses_percentage >= 1.0:
+                    # Add all soft clauses
+                    for row in D_star_df.itertuples(index=False):
+                        t = (row.s, row.o, row.a, row.id)
                         x_t = v(t)
-                        # Add soft clause with probability soft_clause_ratio
-                        if soft_clause_ratio <= 0.0 or soft_clause_ratio >= 1.0:
-                            # fast path for 0 or 1
-                            if soft_clause_ratio == 1.0:
-                                opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
-                        else:
-                            if np.random.random() < soft_clause_ratio:
-                                opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
+                        opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
+                else:
+                    # Randomly sample soft clauses
+                    for row in D_star_df.itertuples(index=False):
+                        if np.random.random() < soft_clauses_percentage:
+                            t = (row.s, row.o, row.a, row.id)
+                            x_t = v(t)
+                            opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
 
-            # hard clauses (always all)
-            for a, (S_set, O_set) in by_a.items():
-                pairs = list(O_set)  # each is (o, id)
-                for (o1, i1), (o2, i2) in combinations(pairs, 2):
-                    if (o1, i1) == (o2, i2):  # redundant but explicit
+            # Hard clauses: use unique S and O from original dfD
+            for a_val, group in dfD.groupby("a"):
+                S_vals = group["s"].unique()
+                O_pairs = group[["o", "id"]].drop_duplicates().to_records(index=False)
+                O_pairs = list(O_pairs)
+
+                for (o1, i1), (o2, i2) in combinations(O_pairs, 2):
+                    if (o1, i1) == (o2, i2):
                         continue
-                    for s1, s2 in combinations(S_set, 2):
+                    for s1, s2 in combinations(S_vals, 2):
                         if s1 == s2:
                             continue
-                        t1 = (s1, o1, a, i1)
-                        t2 = (s2, o2, a, i2)
-                        t3 = (s1, o2, a, i2)
+                        t1 = (s1, o1, a_val, i1)
+                        t2 = (s2, o2, a_val, i2)
+                        t3 = (s1, o2, a_val, i2)
                         opt.add(Or(Not(v(t1)), Not(v(t2)), v(t3)))
+
         else:
             # D elements: (s, o, id)
-            S_set = {s for (s, o, i) in D}
-            O_set = {(o, i) for (s, o, i) in D}
+            dfD = pd.DataFrame(arr, columns=["s", "o", "id"])
 
-            D_star = set()
-            for s in S_set:
-                for (o, i) in O_set:
-                    t = (s, o, i)
-                    D_star.add(t)
-                    x_t = v(t)
-                    if soft_clause_ratio <= 0.0 or soft_clause_ratio >= 1.0:
-                        if soft_clause_ratio == 1.0:
-                            opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
-                    else:
-                        if np.random.random() < soft_clause_ratio:
+            # D_star is cartesian product S x O
+            S_df = dfD[["s"]].drop_duplicates()
+            O_df = dfD[["o", "id"]].drop_duplicates()
+            S_df["key"] = 1
+            O_df["key"] = 1
+            D_star_df = S_df.merge(O_df, on="key").drop("key", axis=1)
+
+            D_star = set(
+                D_star_df[["s", "o", "id"]].itertuples(index=False, name=None)
+            )
+
+            # Soft clauses
+            if soft_clauses_percentage > 0.0:
+                if soft_clauses_percentage >= 1.0:
+                    for row in D_star_df.itertuples(index=False):
+                        t = (row.s, row.o, row.id)
+                        x_t = v(t)
+                        opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
+                else:
+                    for row in D_star_df.itertuples(index=False):
+                        if np.random.random() < soft_clauses_percentage:
+                            t = (row.s, row.o, row.id)
+                            x_t = v(t)
                             opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
 
-            pairs = list(O_set)
-            for (o1, i1), (o2, i2) in combinations(pairs, 2):
+            # Hard clauses using unique S and O from dfD
+            S_vals = dfD["s"].unique()
+            O_pairs = dfD[["o", "id"]].drop_duplicates().to_records(index=False)
+            O_pairs = list(O_pairs)
+
+            for (o1, i1), (o2, i2) in combinations(O_pairs, 2):
                 if (o1, i1) == (o2, i2):
                     continue
-                for s1, s2 in combinations(S_set, 2):
+                for s1, s2 in combinations(S_vals, 2):
                     if s1 == s2:
                         continue
                     t1 = (s1, o1, i1)
