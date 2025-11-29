@@ -324,7 +324,7 @@ measures = {
     "Tuple Contribution": TupleContribution,
 }
 
-timeout_seconds = 2 * 60 * 60
+timeout_seconds = 1 * 60 * 60
 
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 import pandas as pd
@@ -1459,10 +1459,10 @@ if __name__ == "__main__":
     # create_plot_1()
     # create_plot_2()
     # plot_legend()
-    # run_experiment_1()
-    # run_experiment_2()
-    # run_experiment_3()
+    run_experiment_1()
+    run_experiment_2()
+    run_experiment_3()
     # run_experiment_4()
     # run_experiment_5()
     # run_experiment_6()
-    run_experiment_7()
+    # run_experiment_7()
