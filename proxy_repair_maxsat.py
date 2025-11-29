@@ -31,7 +31,13 @@ class ProxyRepairMaxSat:
         else:
             self.dataset = data
 
-    def calculate(self, fairness_criteria, epsilon=None, encode_and_clean=False):
+    def calculate(
+        self,
+        fairness_criteria,
+        epsilon=None,
+        encode_and_clean=False,
+        soft_clause_ratio: float = 0.5,
+    ):
         """
         Computes the proxy repair measure using a MaxSAT solver.
 
@@ -44,11 +50,24 @@ class ProxyRepairMaxSat:
         tuple changes required for fairness. If epsilon is given, Laplace
         noise is added for privacy.
 
+        Parameters
+        ----------
+        fairness_criteria : list[list[str]]
+        epsilon : float or None
+        encode_and_clean : bool
+        soft_clause_ratio : float, default 0.5
+            Fraction of soft clauses to actually add to the solver.
+            1.0 = use all soft clauses (original behavior),
+            0.5 = use ~50% of soft clauses (randomly sampled).
+
         Returns
         -------
         float
             The estimated repair value (possibly noised).
         """
+        # Clamp ratio to [0, 1]
+        soft_clause_ratio = max(0.0, min(1.0, soft_clause_ratio))
+
         start_time = time.time()
         repair = 0
 
@@ -56,9 +75,14 @@ class ProxyRepairMaxSat:
             if len(criterion) not in [2, 3]:
                 raise ValueError("Invalid input")
 
-            protected_col, response_col, admissible_col = (criterion[0], criterion[1],
-                                                           None if len(criterion) == 2 else criterion[2])
-            cols = [protected_col, response_col] + ([admissible_col] if admissible_col is not None else [])
+            protected_col, response_col, admissible_col = (
+                criterion[0],
+                criterion[1],
+                None if len(criterion) == 2 else criterion[2],
+            )
+            cols = [protected_col, response_col] + (
+                [admissible_col] if admissible_col is not None else []
+            )
             if encode_and_clean:
                 df = self._encode_and_clean(self.dataset, cols)
             else:
@@ -66,8 +90,9 @@ class ProxyRepairMaxSat:
             D = self._add_id(df, cols)
 
             opt = Optimize()
-            D_star = (
-                self._conversion_to_solving_general_3cnf(D, admissible_col, opt))
+            D_star = self._conversion_to_solving_general_3cnf(
+                D, admissible_col, opt, soft_clause_ratio
+            )
             if opt.check() != sat:
                 print("No satisfying assignment found.")
                 continue
@@ -86,7 +111,8 @@ class ProxyRepairMaxSat:
         print(
             f"Repair MaxSAT: Proxy Repair MaxSAT for fairness criteria {fairness_criteria}: "
             f"{repair} with data size: {len(self.dataset)} and epsilon: "
-            f"{epsilon if epsilon is not None else 'infinity'}. Calculation took {elapsed_time:.3f} seconds."
+            f"{epsilon if epsilon is not None else 'infinity'}. "
+            f"Calculation took {elapsed_time:.3f} seconds."
         )
         return repair
 
@@ -147,7 +173,7 @@ class ProxyRepairMaxSat:
         return tuple(sorted([f"x_{t1}", f"x_{t2}", f"x_{t3}"]))
 
     @staticmethod
-    def _conversion_to_solving_general_3cnf(D, admissible_col, opt):
+    def _conversion_to_solving_general_3cnf(D, admissible_col, opt, soft_clause_ratio: float):
         """
         Converts a dataset into a 3-CNF MaxSAT formulation.
 
@@ -155,6 +181,8 @@ class ProxyRepairMaxSat:
           - D_star: the set of all tuple combinations satisfying MVD structure
           - Soft clauses: one per tuple, encouraging consistency with the data
           - Hard clauses: 3-CNF constraints enforcing fairness dependencies
+
+        Only a fraction `soft_clause_ratio` of soft clauses are added.
 
         Returns
         -------
@@ -184,9 +212,16 @@ class ProxyRepairMaxSat:
                         t = (s, o, a, i)  # canonical flat key
                         D_star.add(t)
                         x_t = v(t)
-                        opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
+                        # Add soft clause with probability soft_clause_ratio
+                        if soft_clause_ratio <= 0.0 or soft_clause_ratio >= 1.0:
+                            # fast path for 0 or 1
+                            if soft_clause_ratio == 1.0:
+                                opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
+                        else:
+                            if np.random.random() < soft_clause_ratio:
+                                opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
 
-            # hard clauses
+            # hard clauses (always all)
             for a, (S_set, O_set) in by_a.items():
                 pairs = list(O_set)  # each is (o, id)
                 for (o1, i1), (o2, i2) in combinations(pairs, 2):
@@ -210,7 +245,12 @@ class ProxyRepairMaxSat:
                     t = (s, o, i)
                     D_star.add(t)
                     x_t = v(t)
-                    opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
+                    if soft_clause_ratio <= 0.0 or soft_clause_ratio >= 1.0:
+                        if soft_clause_ratio == 1.0:
+                            opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
+                    else:
+                        if np.random.random() < soft_clause_ratio:
+                            opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
 
             pairs = list(O_set)
             for (o1, i1), (o2, i2) in combinations(pairs, 2):
@@ -225,72 +265,3 @@ class ProxyRepairMaxSat:
                     opt.add(Or(Not(v(t1)), Not(v(t2)), v(t3)))
 
         return D_star
-
-        # Step 3: Enforce MVD 3CNF constraints
-        # OLD MEMORY INEFFICIENT:
-        # C = set()
-        # if admissible_col is not None:
-        #     for (s1, o1, a1) in D_star:
-        #         for (s2, o2, a2) in D_star:
-        #             if a1 == a2 and s1 != s2 and o1 != o2:
-        #                 C.add((s1, o1, s2, o2, a1))
-        # else:
-        #     for (s1, o1) in D_star:
-        #         for (s2, o2) in D_star:
-        #             if s1 != s2 and o1 != o2:
-        #                 C.add((s1, o1, s2, o2))
-        #
-        # used_keys = set()
-        # for t in C:
-        #     if admissible_col is not None:
-        #         s1, o1, s2, o2, a = t
-        #         t1 = (s1, o1, a)
-        #         t2 = (s2, o2, a)
-        #         t3 = (s1, o2, a)
-        #     else:
-        #         s1, o1, s2, o2 = t
-        #         t1 = (s1, o1)
-        #         t2 = (s2, o2)
-        #         t3 = (s1, o2)
-        #     x_t1 = Bool(f"x_{t1}")
-        #     x_t2 = Bool(f"x_{t2}")
-        #     x_t3 = Bool(f"x_{t3}")
-        #     key = ProxyRepairMaxSat._clause_key(t1, t2, t3)
-        #     if key not in used_keys and ProxyRepairMaxSat._clause_key(t2, t1, t3) not in used_keys:
-        #         hard_clauses.add(Or(Not(x_t1), Not(x_t2), x_t3))
-        #         used_keys.add(key)
-        # ----------------------------------------------------------------------------------------------------
-        # OLD MEMORY EFFICIENT:
-        # if admissible_col is not None:
-        #     # group unique (s,o) pairs by each admissible value a
-        #     group_by_a_star = defaultdict(set)
-        #     for (s, o, a) in D_star:
-        #         group_by_a_star[a].add((s, o))
-        #
-        #     for a, pairs in group_by_a_star.items():
-        #         uniq_pairs = list(pairs)  # unique (s,o) for this a
-        #         for (s1, o1), (s2, o2) in combinations(uniq_pairs, 2):
-        #             if s1 == s2 or o1 == o2:
-        #                 continue
-        #             t1 = (s1, o1, a)
-        #             t2 = (s2, o2, a)
-        #             t3 = (s1, o2, a)
-        #             x_t1 = Bool(f"x_{t1}")
-        #             x_t2 = Bool(f"x_{t2}")
-        #             x_t3 = Bool(f"x_{t3}")
-        #             hard_clauses.add(Or(Not(x_t1), Not(x_t2), x_t3))
-        # else:
-        #     # unconditional: unique (s,o) pairs across all D_star
-        #     uniq_pairs = list(set(D_star))  # D_star already contains (s,o)
-        #     for (s1, o1), (s2, o2) in combinations(uniq_pairs, 2):
-        #         if s1 == s2 or o1 == o2:
-        #             continue
-        #         t1 = (s1, o1)
-        #         t2 = (s2, o2)
-        #         t3 = (s1, o2)
-        #         x_t1 = Bool(f"x_{t1}")
-        #         x_t2 = Bool(f"x_{t2}")
-        #         x_t3 = Bool(f"x_{t3}")
-        #         hard_clauses.add(Or(Not(x_t1), Not(x_t2), x_t3))
-        #
-        # return soft_clauses, hard_clauses, D_star
