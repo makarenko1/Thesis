@@ -1087,11 +1087,10 @@ def run_experiment_6(
         return abs(x - y) / denom
 
     plt.rcParams.update({
-        "axes.titlesize": 34,
-        "axes.labelsize": 30,
-        "xtick.labelsize": 24,
-        "ytick.labelsize": 24,
-        "figure.titlesize": 34,
+        "axes.titlesize": 28,
+        "axes.labelsize": 24,
+        "xtick.labelsize": 16,
+        "ytick.labelsize": 16,
     })
 
     fig, axes = plt.subplots(1, 5, figsize=(28, 6), sharey=False)
@@ -1208,11 +1207,10 @@ def run_experiment_7(
     criteria = [["HEALTH", "INCTOT"], ["INCTOT", "AGE"], ["SEX", "AGE"]]
 
     plt.rcParams.update({
-        "axes.titlesize": 34,
-        "axes.labelsize": 30,
-        "xtick.labelsize": 24,
-        "ytick.labelsize": 24,
-        "figure.titlesize": 34,
+        "axes.titlesize": 16,
+        "axes.labelsize": 16,
+        "xtick.labelsize": 14,
+        "ytick.labelsize": 14,
     })
 
     for criterion in criteria:
@@ -1243,7 +1241,7 @@ def run_experiment_7(
     num_criteria = len(criteria)
     x = np.arange(num_criteria)
     criterion_numbers = [str(i) for i in range(1, num_criteria + 1)]
-    measure_labels = ["ProxyMutualInformationTVD", "ProxyRepairMaxSAT", "TupleContribution"]
+    measure_labels = ["Proxy\nMutualInformationTVD", "Proxy\nRepairMaxSAT", "TupleContribution"]
 
     # one distinct color per subplot
     subplot_colors = ["tab:blue", "tab:orange", "tab:green"]
