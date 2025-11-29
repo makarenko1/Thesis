@@ -1381,13 +1381,13 @@ def run_experiment_7(
             sample = data_full.sample(n=n, replace=False)
             sample_measures = sample[criterion]
 
-            tvd_proxy = ProxyMutualInformationTVD(data=sample_criterion)
+            tvd_proxy = ProxyMutualInformationTVD(data=sample_measures)
             sum_tvd += float(tvd_proxy.calculate([criterion], epsilon=epsilon))
 
-            repair_proxy = ProxyRepairMaxSat(data=sample_criterion)
+            repair_proxy = ProxyRepairMaxSat(data=sample_measures)
             sum_repair += float(repair_proxy.calculate([criterion], epsilon=epsilon))
 
-            tc_proxy = TupleContribution(data=sample_criterion)
+            tc_proxy = TupleContribution(data=sample_measures)
             sum_tc += float(tc_proxy.calculate([criterion], epsilon=epsilon))
 
             protected_col, response_col = criterion[0], criterion[1]
