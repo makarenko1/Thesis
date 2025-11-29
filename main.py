@@ -2,7 +2,7 @@ import os
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
+from typing import Optional, List
 
 import torch
 from matplotlib import pyplot as plt
@@ -1194,6 +1194,94 @@ def run_experiment_6(
     plt.show()
 
 
+from typing import List
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import LabelEncoder
+
+def _encode_and_clean_dp(data_path: str, criterion_cols: List[str]) -> pd.DataFrame:
+    """
+    DP-specific cleaner.
+
+    - Read CSV and replace ["NA", "N/A", ""] with NaN.
+    - Convert numeric-like columns to numeric, mark illegal values as NaN:
+        * All numeric: negative values -> NaN
+        * For data/census.csv and INCTOT: values > 200000 -> NaN
+    - Then:
+        * For columns in `criterion_cols`: we DROP rows with NaNs in these columns.
+        * For other numeric columns: fill NaNs with column mean.
+    - For data/census.csv:
+        * AGE bucketed into 10-year bins:
+              1–10 -> 10, 11–20 -> 20, ...
+        * INCTOT discretized into 10k buckets:
+              0–9999 -> 0, 10000–19999 -> 10000, ...
+    - Finally, label-encode all non-numeric columns.
+    """
+    df = pd.read_csv(data_path)
+    df = df.replace(["NA", "N/A", ""], pd.NA).copy()
+
+    # --- Step 1: numeric cleaning and illegal -> NaN ---
+    for c in df.columns:
+        # Try treating as numeric if it is numeric or object
+        if pd.api.types.is_numeric_dtype(df[c]) or df[c].dtype == object:
+            vals = pd.to_numeric(df[c], errors="coerce")
+
+            # Census-specific INCTOT > 200000 illegal
+            if data_path == "data/census.csv" and c == "INCTOT":
+                vals = vals.mask(vals > 200000, np.nan)
+
+            # Negative values illegal for any numeric
+            vals = vals.mask(vals < 0, np.nan)
+
+            df[c] = vals
+
+    # --- Step 2: drop rows with NaN in criterion columns ---
+    crit_cols_present = [c for c in criterion_cols if c in df.columns]
+    if crit_cols_present:
+        df = df.dropna(subset=crit_cols_present)
+
+    # --- Step 3: fill NaNs with mean for NON-criterion numeric columns ---
+    for c in df.columns:
+        if c in crit_cols_present:
+            continue  # do not impute criterion columns
+        if pd.api.types.is_numeric_dtype(df[c]):
+            if df[c].isna().any():
+                mean_val = df[c].mean(skipna=True)
+                if not np.isnan(mean_val):
+                    df[c] = df[c].fillna(mean_val)
+
+    # --- Step 4: census-specific discretization (after cleaning/imputation) ---
+    if data_path == "data/census.csv":
+        # AGE: bucket into size-10 bins
+        if "AGE" in df.columns:
+            age = pd.to_numeric(df["AGE"], errors="coerce")
+            # If anything invalid appears here, treat <1 as NaN and re-impute safely
+            age = age.mask(age < 1, np.nan)
+            # For AGE as criterion we don't want NaNs; since we already dropped on crit,
+            # any NaNs now are from this masking; we can safely fill with mean of valid.
+            mean_age = age.mean(skipna=True)
+            if not np.isnan(mean_age):
+                age = age.fillna(mean_age)
+            age = (((age - 1) // 10) + 1) * 10
+            df["AGE"] = age
+
+        # INCTOT: discretize into 10k buckets
+        if "INCTOT" in df.columns:
+            inctot = pd.to_numeric(df["INCTOT"], errors="coerce")
+            # If any NaN slipped in, fill with mean, respecting criterion behavior already applied
+            mean_inc = inctot.mean(skipna=True)
+            if not np.isnan(mean_inc):
+                inctot = inctot.fillna(mean_inc)
+            df["INCTOT"] = (inctot // 10000) * 10000
+
+    # --- Step 5: label-encode non-numeric columns ---
+    for c in df.columns:
+        if not pd.api.types.is_numeric_dtype(df[c]):
+            df[c] = LabelEncoder().fit_transform(df[c].astype(str))
+
+    return df
+
+
 def run_experiment_7(
         epsilon: Optional[float] = None,
         num_tuples: int = 5000,
@@ -1202,7 +1290,74 @@ def run_experiment_7(
 ):
     """Values of measures for IPUMS-CPS (for criterions with more unfairness we expect higher values)."""
 
+    def demographic_parity_gap_with_model(df: pd.DataFrame,
+                                          protected_col: str,
+                                          response_col: str,
+                                          random_state: int = 0) -> float:
+        """
+        Demographic parity gap based on predictions of a RandomForest
+        trained on MinMax-scaled features, using a train/test split on
+        the FULL given dataframe `df` (no external sampling).
+
+        Steps:
+        - X = all columns except response_col
+        - y = response_col
+        - s = protected_col
+        - MinMaxScale X
+        - train_test_split
+        - Train RandomForestClassifier on train split
+        - Compute DP gap on test predictions:
+          abs(max_a P(Ŷ=1 | S=a) - min_a P(Ŷ=1 | S=a))
+        """
+        if df.empty:
+            return 0.0
+
+        if response_col not in df.columns or protected_col not in df.columns:
+            return 0.0
+
+        # Features: all columns except response_col
+        feature_cols = [c for c in df.columns if c != response_col]
+        if not feature_cols:
+            return 0.0  # no features to train on
+
+        X = df[feature_cols].to_numpy(dtype=float)
+        y = df[response_col].to_numpy()
+        s = df[protected_col].to_numpy()
+
+        # Scale features
+        scaler = MinMaxScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        # Train/test split on the full df (no sampling outside)
+        stratify_arg = y if len(np.unique(y)) > 1 else None
+        X_train, X_test, y_train, y_test, s_train, s_test = train_test_split(
+            X_scaled, y, s,
+            test_size=0.3,
+            random_state=random_state,
+            stratify=stratify_arg,
+        )
+
+        # Train RF classifier
+        clf = RandomForestClassifier(
+            n_estimators=100,
+            random_state=random_state,
+            n_jobs=-1,
+        )
+        clf.fit(X_train, y_train)
+
+        # Predictions on the test set
+        y_pred = clf.predict(X_test)
+
+        # Pick the "positive" class as max label
+        positive_label = np.max(y_pred)
+        pos = (y_pred == positive_label).astype(float)
+
+        # Group by protected attribute S on test set
+        rates = pd.Series(pos).groupby(pd.Series(s_test)).mean()
+        return abs(float(rates.max() - rates.min())) if len(rates) > 0 else 0.0
+
     all_rows = []
+    dp_values = []
     path = "data/census.csv"
     criteria = [["HEALTH", "INCTOT"], ["INCTOT", "AGE"], ["SEX", "AGE"]]
 
@@ -1214,29 +1369,46 @@ def run_experiment_7(
     })
 
     for criterion in criteria:
+        data_full = _encode_and_clean_dp(path, criterion)
         data = _encode_and_clean(path, criterion)
         n = min(num_tuples, len(data))
         sum_tvd = 0.0
         sum_repair = 0.0
         sum_tc = 0.0
+        sum_dp = 0.0
 
         for rep in range(repetitions):
-            sample = data.sample(n=n, replace=False)
-            tvd_proxy = ProxyMutualInformationTVD(data=sample)
+            sample = data_full.sample(n=n, replace=False)
+            sample_measures = sample[criterion]
+
+            tvd_proxy = ProxyMutualInformationTVD(data=sample_criterion)
             sum_tvd += float(tvd_proxy.calculate([criterion], epsilon=epsilon))
-            repair_proxy = ProxyRepairMaxSat(data=sample)
+
+            repair_proxy = ProxyRepairMaxSat(data=sample_criterion)
             sum_repair += float(repair_proxy.calculate([criterion], epsilon=epsilon))
-            tc_proxy = TupleContribution(data=sample)
+
+            tc_proxy = TupleContribution(data=sample_criterion)
             sum_tc += float(tc_proxy.calculate([criterion], epsilon=epsilon))
+
+            protected_col, response_col = criterion[0], criterion[1]
+            sum_dp += demographic_parity_gap_with_model(
+                df=sample,
+                protected_col=protected_col,
+                response_col=response_col,
+                random_state=rep,
+            )
 
         tvd_avg = sum_tvd / repetitions
         repair_avg = sum_repair / repetitions
         tc_avg = sum_tc / repetitions
+        dp_avg = sum_dp / repetitions
+
         all_rows.append([
             round(tvd_avg, 4),
             repair_avg,
             round(tc_avg, 4),
         ])
+        dp_values.append(dp_avg)
 
     num_criteria = len(criteria)
     x = np.arange(num_criteria)
@@ -1246,6 +1418,7 @@ def run_experiment_7(
     # one distinct color per subplot
     subplot_colors = ["tab:blue", "tab:orange", "tab:green"]
 
+    # ---------- main three metrics ----------
     fig, axes = plt.subplots(
         nrows=1,
         ncols=3,
@@ -1273,6 +1446,23 @@ def run_experiment_7(
     plt.savefig(outfile, dpi=256, bbox_inches="tight")
     plt.show()
 
+    # ---------- demographic parity plot ----------
+    dp_outfile = f"{outfile}_dp.png"
+    fig_dp, ax_dp = plt.subplots(figsize=(6, 4))
+    dp_vals_np = np.array(dp_values, dtype=float)
+    ax_dp.bar(x, dp_vals_np, color="tab:purple")
+    ax_dp.set_xticks(x)
+    ax_dp.set_xticklabels(criterion_numbers)
+    ax_dp.set_xlabel("criterion")
+    ax_dp.set_ylabel("Demographic Parity gap")
+
+    plt.tight_layout()
+    dp_dir = os.path.dirname(dp_outfile)
+    if dp_dir:
+        os.makedirs(dp_dir, exist_ok=True)
+    plt.savefig(dp_outfile, dpi=256, bbox_inches="tight")
+    plt.show()
+
 
 if __name__ == "__main__":
     # create_plot_1()
@@ -1285,7 +1475,3 @@ if __name__ == "__main__":
     # run_experiment_5()
     # run_experiment_6()
     run_experiment_7()
-    # run_experiment_7_make_less_unfair()
-    # run_experiment_8_unconditional()
-    # run_experiment_8_conditional()
-
