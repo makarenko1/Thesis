@@ -86,7 +86,7 @@ y_formatter = FuncFormatter(_yfmt)
 
 def create_plot_0(
         epsilon: Optional[float] = 10.0,
-        num_tuples: int = 50000,
+        num_tuples: int = 10000,
         repetitions: int = 3,
         outfile: str = "plots/plot0.png",
 ):
