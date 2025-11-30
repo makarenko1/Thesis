@@ -1,15 +1,20 @@
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
+import numpy as np
+import pandas as pd
 import torch
 from matplotlib import pyplot as plt
-from matplotlib.ticker import LogLocator
+from matplotlib.lines import Line2D as MplLine2D
+from matplotlib.ticker import LogLocator, FuncFormatter
 from opacus import PrivacyEngine
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import log_loss, accuracy_score
 from sklearn.model_selection import train_test_split
-from torch import nn, optim
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from mutual_information import MutualInformation
@@ -17,7 +22,6 @@ from proxy_mutual_information_tvd import ProxyMutualInformationTVD
 from proxy_repair_maxsat import ProxyRepairMaxSat
 from tuple_contribution import TupleContribution
 from unused_measures.proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
-
 
 adult_criteria = [["sex", "income>50K", "education-num"], ["sex", "income>50K", "hours-per-week"],
                   ["race", "income>50K", "education-num"], ["race", "income>50K", "hours-per-week"]]
@@ -70,9 +74,6 @@ datasets_shortened = {
         "criteria": compas_criteria,
     }
 }
-
-
-from matplotlib.ticker import FuncFormatter
 
 # Formatter: round to 3 decimals, then strip trailing zeros and dot
 def _yfmt(y, pos):
@@ -324,10 +325,6 @@ measures = {
 
 timeout_seconds = 1 * 60 * 60
 
-from sklearn.preprocessing import LabelEncoder, MinMaxScaler
-import pandas as pd
-import numpy as np
-
 def _encode_and_clean(data_path, cols):
     """
     Read CSV, clean missing values, normalize numeric columns, and label-encode
@@ -384,7 +381,6 @@ def plot_legend(outfile="plots/legend_proxies.png"):
     fig, ax = plt.subplots(figsize=(8, 1.6))
     handles = []
     for i, label in enumerate(measures.keys()):
-        from matplotlib.lines import Line2D as MplLine2D
         line = MplLine2D(
             [2, 3], [2, 2],
             color=colors[i % len(colors)],
@@ -1271,45 +1267,37 @@ def _encode_and_clean_dp(data_path: str, criterion_cols: List[str]) -> pd.DataFr
 
 def run_experiment_7(
         epsilon: Optional[float] = 1.0,
-        num_tuples: int = 5000,
-        repetitions: int = 1,
+        num_tuples: int = 10000,
+        repetitions: int = 3,
         outfile: str = "plots/experiment7.png",
 ):
     """Values of measures for IPUMS-CPS (for criterions with more unfairness we expect higher values)."""
 
     def demographic_parity_gap_with_rf(
-        df: pd.DataFrame,
-        protected_col: str,
-        response_col: str,
-        admissible_col: Optional[str] = None,
-        random_state: int = 0,
-        epsilon_rf: Optional[float] = 1.0,
-    ) -> float:
+            df: pd.DataFrame,
+            protected_col: str,
+            response_col: str,
+            admissible_col: Optional[str] = None,
+            random_state: int = 0,
+            epsilon_rf: float = 1.0,
+    ) -> Tuple[float, float]:
         """
-        Demographic / conditional statistical parity gap based on predictions
-        of a RandomForest trained on MinMax-scaled features, using a
-        train/test split on the FULL given dataframe `df`.
-
-        Noise is added to the training features with scale ∝ 1/epsilon_rf.
-
-        If `admissible_col` is None:
-            DP gap = max_a P(Ŷ=1 | S=a) - min_a P(Ŷ=1 | S=a)
-
-        If `admissible_col` is not None:
-            Conditional DP gap =
-                max_z [ max_s P(Ŷ=1 | S=s, A=z) - min_s P(Ŷ=1 | S=s, A=z) ]
+        (Conditional) demographic parity gap with a RandomForest classifier.
+        Returns (dp_gap, rf_loss), where rf_loss is log-loss on test
+        (or 1 - accuracy as fallback).
         """
         if df.empty:
-            return 0.0
+            return 0.0, 0.0
 
         if response_col not in df.columns or protected_col not in df.columns:
-            return 0.0
+            return 0.0, 0.0
         if admissible_col is not None and admissible_col not in df.columns:
-            admissible_col = None  # fall back gracefully
+            admissible_col = None
 
+        # Features: all columns except response_col
         feature_cols = [c for c in df.columns if c != response_col]
         if not feature_cols:
-            return 0.0
+            return 0.0, 0.0
 
         X = df[feature_cols].to_numpy(dtype=float)
         y = df[response_col].to_numpy()
@@ -1318,56 +1306,62 @@ def run_experiment_7(
             a = df[admissible_col].to_numpy()
         else:
             a = None
+
+        # Optional: add Gaussian noise to features (scaled by epsilon_rf)
+        if epsilon_rf is not None and epsilon_rf > 0:
+            sigma = 1.0 / float(epsilon_rf)
+            X = X + np.random.normal(loc=0.0, scale=sigma, size=X.shape)
 
         # Scale features
         scaler = MinMaxScaler()
         X_scaled = scaler.fit_transform(X)
 
-        stratify_arg = y if len(np.unique(y)) > 1 else None
+        # Robust stratify handling
+        unique_labels, counts = np.unique(y, return_counts=True)
+        if len(unique_labels) <= 1 or counts.min() < 2:
+            stratify_arg = None
+        else:
+            stratify_arg = y
 
+        # Train/test split
         if a is None:
             X_train, X_test, y_train, y_test, s_train, s_test = train_test_split(
                 X_scaled, y, s,
-                test_size=0.3,
+                test_size=0.15,
                 random_state=random_state,
                 stratify=stratify_arg,
             )
+            a_train, a_test = None, None
         else:
             X_train, X_test, y_train, y_test, s_train, s_test, a_train, a_test = train_test_split(
                 X_scaled, y, s, a,
-                test_size=0.3,
+                test_size=0.15,
                 random_state=random_state,
                 stratify=stratify_arg,
             )
 
-        # ---- Add noise to training features, scale ∝ 1/epsilon ----
-        if epsilon_rf is None or epsilon_rf <= 0:
-            noise_scale = 0.0
-        else:
-            noise_scale = 1.0 / float(epsilon_rf)
-        if noise_scale > 0.0:
-            noise = np.random.laplace(loc=0.0, scale=noise_scale, size=X_train.shape)
-            X_train_noisy = X_train + noise
-        else:
-            X_train_noisy = X_train
-
-        # Train RF classifier on noisy features
+        # Train RF
         clf = RandomForestClassifier(
             n_estimators=100,
             random_state=random_state,
             n_jobs=-1,
         )
-        clf.fit(X_train_noisy, y_train)
+        clf.fit(X_train, y_train)
 
-        # Predictions on the (clean) test set
+        # Predict on test
         y_pred = clf.predict(X_test)
         positive_label = np.max(y_pred)
         pos = (y_pred == positive_label).astype(float)
 
+        # RF loss in [0, 1]: 1 - accuracy on test
+        rf_loss = 1.0 - accuracy_score(y_test, y_pred)
+
         if a is None:
+            # Unconditional DP
             rates = pd.Series(pos).groupby(pd.Series(s_test)).mean()
-            return float(abs(rates.max() - rates.min())) if len(rates) > 0 else 0.0
+            dp_gap = float(abs(rates.max() - rates.min())) if len(rates) > 0 else 0.0
         else:
+            # Conditional DP: worst admissible group
             df_eval = pd.DataFrame({
                 "pos": pos,
                 "s": s_test,
@@ -1378,141 +1372,165 @@ def run_experiment_7(
                 rates = grp["pos"].groupby(grp["s"]).mean()
                 if len(rates) > 0:
                     gaps.append(float(rates.max() - rates.min()))
-            return max(gaps) if gaps else 0.0
+            dp_gap = max(gaps) if gaps else 0.0
+
+        return dp_gap, rf_loss
 
     def demographic_parity_gap_with_nn(
-        df: pd.DataFrame,
-        protected_col: str,
-        response_col: str,
-        admissible_col: Optional[str] = None,
-        random_state: int = 0,
-        epsilon_nn: Optional[float] = 1.0,
-        delta: float = 1e-5,
-        epochs: int = 5,
-        batch_size: int = 256,
-        max_grad_norm: float = 1.0,
-    ) -> float:
+            df: pd.DataFrame,
+            protected_col: str,
+            response_col: str,
+            admissible_col: Optional[str] = None,
+            random_state: int = 0,
+            epsilon_nn: float = 1.0,
+    ) -> Tuple[float, float]:
         """
-        Same conditional DP definition as above, but using a simple neural
-        network trained with Opacus PrivacyEngine (DP-SGD) with target epsilon.
+        (Conditional) demographic parity gap with a small neural net trained
+        with DP-SGD (via Opacus PrivacyEngine).
+
+        Returns (dp_gap, nn_loss), where nn_loss is the last-epoch average
+        training cross-entropy loss.
         """
         if df.empty:
-            return 0.0
+            return 0.0, 0.0
 
         if response_col not in df.columns or protected_col not in df.columns:
-            return 0.0
+            return 0.0, 0.0
         if admissible_col is not None and admissible_col not in df.columns:
-            admissible_col = None
+            admissible_col = None  # fallback gracefully
 
+        # Features: all columns except response_col
         feature_cols = [c for c in df.columns if c != response_col]
         if not feature_cols:
-            return 0.0
+            return 0.0, 0.0
 
         X = df[feature_cols].to_numpy(dtype=float)
-        y = df[response_col].to_numpy()
+        y_raw = df[response_col].to_numpy()
         s = df[protected_col].to_numpy()
-        if admissible_col is not None:
-            a = df[admissible_col].to_numpy()
-        else:
-            a = None
+        a = df[admissible_col].to_numpy() if admissible_col is not None else None
 
-        # Scaling
+        # Encode y to 0..C-1 for CrossEntropy
+        le = LabelEncoder()
+        y_enc = le.fit_transform(y_raw).astype(np.int64)
+        num_classes = len(le.classes_)
+        if num_classes < 2:
+            return 0.0, 0.0
+
+        # Optional: add Gaussian noise to features, scaled by epsilon_nn
+        if epsilon_nn is not None and epsilon_nn > 0:
+            sigma = 1.0 / float(epsilon_nn)
+            X = X + np.random.normal(loc=0.0, scale=sigma, size=X.shape)
+
+        # Scale features
         scaler = MinMaxScaler()
         X_scaled = scaler.fit_transform(X)
 
-        stratify_arg = y if len(np.unique(y)) > 1 else None
+        # Robust stratify handling
+        unique_labels, counts = np.unique(y_enc, return_counts=True)
+        if len(unique_labels) <= 1 or counts.min() < 2:
+            stratify_arg = None
+        else:
+            stratify_arg = y_enc
 
+        # Train/test split
         if a is None:
             X_train, X_test, y_train, y_test, s_train, s_test = train_test_split(
-                X_scaled, y, s,
-                test_size=0.3,
+                X_scaled, y_enc, s,
+                test_size=0.15,
                 random_state=random_state,
                 stratify=stratify_arg,
             )
+            a_train = a_test = None
         else:
             X_train, X_test, y_train, y_test, s_train, s_test, a_train, a_test = train_test_split(
-                X_scaled, y, s, a,
-                test_size=0.3,
+                X_scaled, y_enc, s, a,
+                test_size=0.15,
                 random_state=random_state,
                 stratify=stratify_arg,
             )
 
-        # ---- Build simple NN ----
-        torch.manual_seed(random_state)
+        # ---- DP-SGD NN training ----
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        X_train_t = torch.tensor(X_train, dtype=torch.float32)
+        y_train_t = torch.tensor(y_train, dtype=torch.long)
+        X_test_t = torch.tensor(X_test, dtype=torch.float32)
+
+        train_ds = TensorDataset(X_train_t, y_train_t)
+        batch_size = min(1000, len(train_ds))
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+
         input_dim = X_train.shape[1]
-        num_classes = int(np.max(y_train)) + 1
 
         class SimpleNN(nn.Module):
-            def __init__(self, in_dim, hidden=64, out_dim=2):
+            def __init__(self, d_in, d_hidden=32, num_classes=2):
                 super().__init__()
                 self.net = nn.Sequential(
-                    nn.Linear(in_dim, hidden),
+                    nn.Linear(d_in, d_hidden),
                     nn.ReLU(),
-                    nn.Linear(hidden, hidden),
-                    nn.ReLU(),
-                    nn.Linear(hidden, out_dim),
+                    nn.Linear(d_hidden, num_classes),
                 )
 
             def forward(self, x):
                 return self.net(x)
 
-        model = SimpleNN(input_dim, hidden=64, out_dim=num_classes)
-        optimizer = optim.SGD(model.parameters(), lr=0.05, momentum=0.9)
+        model = SimpleNN(input_dim, d_hidden=32, num_classes=num_classes).to(device)
         criterion = nn.CrossEntropyLoss()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.05, momentum=0.9)
 
-        # DataLoader
-        X_train_t = torch.tensor(X_train, dtype=torch.float32)
-        y_train_t = torch.tensor(y_train, dtype=torch.long)
-        train_dataset = TensorDataset(X_train_t, y_train_t)
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        # Attach PrivacyEngine (DP-SGD)
+        if epsilon_nn is not None and epsilon_nn > 0:
+            max_grad_norm = 1.0
+            target_epsilon = float(epsilon_nn)
+            target_delta = 1e-5
+            epochs = 10
 
-        # ---- Make model private with PrivacyEngine ----
-        if epsilon_nn is None or epsilon_nn <= 0:
-            # No privacy; just train standard
-            privacy_engine = None
-            for _ in range(epochs):
-                model.train()
-                for xb, yb in train_loader:
-                    optimizer.zero_grad()
-                    logits = model(xb)
-                    loss = criterion(logits, yb)
-                    loss.backward()
-                    optimizer.step()
-        else:
             privacy_engine = PrivacyEngine()
             model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
                 module=model,
                 optimizer=optimizer,
                 data_loader=train_loader,
-                target_epsilon=float(epsilon_nn),
-                target_delta=delta,
+                target_epsilon=target_epsilon,
+                target_delta=target_delta,
                 epochs=epochs,
                 max_grad_norm=max_grad_norm,
             )
+        else:
+            epochs = 15
 
-            for _ in range(epochs):
-                model.train()
-                for xb, yb in train_loader:
-                    optimizer.zero_grad()
-                    logits = model(xb)
-                    loss = criterion(logits, yb)
-                    loss.backward()
-                    optimizer.step()
+        model.train()
+        for epoch in range(epochs):
+            epoch_loss = 0.0
+            n_batches = 0
+            for xb, yb in train_loader:
+                xb = xb.to(device)
+                yb = yb.to(device)
+                optimizer.zero_grad()
+                logits = model(xb)
+                loss = criterion(logits, yb)
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+                n_batches += 1
 
-        # ---- Evaluate on test set ----
+        # ---- DP gap AND 0-1 loss on predictions ----
         model.eval()
-        X_test_t = torch.tensor(X_test, dtype=torch.float32)
         with torch.no_grad():
-            logits = model(X_test_t)
-            y_pred = torch.argmax(logits, dim=1).cpu().numpy()
+            logits_test = model(X_test_t.to(device))
+            y_pred = torch.argmax(logits_test, dim=1).cpu().numpy()
 
         positive_label = np.max(y_pred)
         pos = (y_pred == positive_label).astype(float)
 
+        # NN loss in [0, 1]: 1 - accuracy on test
+        nn_loss = 1.0 - accuracy_score(y_test, y_pred)
+
         if a is None:
+            # Unconditional DP
             rates = pd.Series(pos).groupby(pd.Series(s_test)).mean()
-            return float(abs(rates.max() - rates.min())) if len(rates) > 0 else 0.0
+            dp_gap = float(abs(rates.max() - rates.min())) if len(rates) > 0 else 0.0
         else:
+            # Conditional DP: worst admissible group
             df_eval = pd.DataFrame({
                 "pos": pos,
                 "s": s_test,
@@ -1523,20 +1541,20 @@ def run_experiment_7(
                 rates = grp["pos"].groupby(grp["s"]).mean()
                 if len(rates) > 0:
                     gaps.append(float(rates.max() - rates.min()))
-            return max(gaps) if gaps else 0.0
+            dp_gap = max(gaps) if gaps else 0.0
+
+        return dp_gap, nn_loss
 
     # ------------ main experiment ------------
 
     all_rows = []
     dp_values_rf = []
     dp_values_nn = []
+    rf_losses_avg = []
+    nn_losses_avg = []
+
     path = "data/census.csv"
-    criteria = [
-        ["HEALTH", "INCTOT"],
-        ["INCTOT", "AGE"],
-        ["SEX", "AGE"],
-        ["HEALTH", "OCC", "EDUC"],  # conditional criterion
-    ]
+    criteria = census_criteria  # assumed defined elsewhere
 
     plt.rcParams.update({
         "axes.titlesize": 16,
@@ -1545,18 +1563,20 @@ def run_experiment_7(
         "ytick.labelsize": 14,
     })
 
-    for criterion in criteria:
+    for crit_idx, criterion in enumerate(criteria, start=1):
         data_full = _encode_and_clean_dp(path, criterion)
         data = _encode_and_clean(path, criterion)
         n = min(num_tuples, len(data))
+
         sum_tvd = 0.0
         sum_repair = 0.0
         sum_tc = 0.0
         sum_dp_rf = 0.0
         sum_dp_nn = 0.0
+        sum_loss_rf = 0.0
+        sum_loss_nn = 0.0
 
         for rep in range(repetitions):
-            # Sample from the full DP-preprocessed data for this criterion
             sample = data_full.sample(n=n, replace=False)
             sample_measures = sample[criterion]
 
@@ -1572,16 +1592,15 @@ def run_experiment_7(
             protected_col, response_col = criterion[0], criterion[1]
             admissible_col = criterion[2] if len(criterion) == 3 else None
 
-            sum_dp_rf += demographic_parity_gap_with_rf(
-                df=sample,
-                protected_col=protected_col,
-                response_col=response_col,
-                admissible_col=admissible_col,
-                random_state=rep,
-                epsilon_rf=epsilon,
-            )
-
-            sum_dp_nn += demographic_parity_gap_with_nn(
+            # dp_rf, loss_rf = demographic_parity_gap_with_rf(
+            #     df=sample,
+            #     protected_col=protected_col,
+            #     response_col=response_col,
+            #     admissible_col=admissible_col,
+            #     random_state=rep,
+            #     epsilon_rf=epsilon,
+            # )
+            dp_nn, loss_nn = demographic_parity_gap_with_nn(
                 df=sample,
                 protected_col=protected_col,
                 response_col=response_col,
@@ -1590,19 +1609,33 @@ def run_experiment_7(
                 epsilon_nn=epsilon,
             )
 
+            # sum_dp_rf += dp_rf
+            sum_dp_nn += dp_nn
+            # sum_loss_rf += loss_rf
+            sum_loss_nn += loss_nn
+
         tvd_avg = sum_tvd / repetitions
         repair_avg = sum_repair / repetitions
         tc_avg = sum_tc / repetitions
-        dp_rf_avg = sum_dp_rf / repetitions
+        # dp_rf_avg = sum_dp_rf / repetitions
         dp_nn_avg = sum_dp_nn / repetitions
+        rf_loss_avg = sum_loss_rf / repetitions
+        nn_loss_avg = sum_loss_nn / repetitions
 
         all_rows.append([
             round(tvd_avg, 4),
             repair_avg,
             round(tc_avg, 4),
         ])
-        dp_values_rf.append(dp_rf_avg)
+        # dp_values_rf.append(dp_rf_avg)
         dp_values_nn.append(dp_nn_avg)
+        rf_losses_avg.append(rf_loss_avg)
+        nn_losses_avg.append(nn_loss_avg)
+
+        print(
+            f"Criterion {crit_idx}/{len(criteria)} {criterion}: "
+            f"RF avg loss = {rf_loss_avg:.4f}, NN avg loss = {nn_loss_avg:.4f}"
+        )
 
     num_criteria = len(criteria)
     x = np.arange(num_criteria)
@@ -1640,7 +1673,7 @@ def run_experiment_7(
     plt.savefig(outfile, dpi=256, bbox_inches="tight")
     plt.show()
 
-    # ---------- (conditional) demographic parity plot: RF vs NN ----------
+    # ---------- (conditional) demographic parity plots: RF and NN separately ----------
 
     plt.rcParams.update({
         "axes.titlesize": 18,
@@ -1650,26 +1683,38 @@ def run_experiment_7(
         "figure.titlesize": 18,
     })
 
-    dp_outfile = f"{outfile.split('.')[0]}_dp.png"
-    fig_dp, ax_dp = plt.subplots(figsize=(4.5, 3.5))
-    dp_rf_np = np.array(dp_values_rf, dtype=float)
+    # RF DP plot
+    # dp_outfile_rf = f"{outfile.split('.')[0]}_dp_rf.png"
+    # fig_rf, ax_rf = plt.subplots(figsize=(3.5, 3.5))
+    # dp_rf_np = np.array(dp_values_rf, dtype=float)
+    # ax_rf.bar(x, dp_rf_np, color="tab:purple")
+    # ax_rf.set_xticks(x)
+    # ax_rf.set_xticklabels(criterion_numbers)
+    # ax_rf.set_xlabel("criterion")
+    # fig_rf.suptitle("Conditional Demographic\nParity gap (RF)")
+    #
+    # plt.tight_layout()
+    # dp_dir = os.path.dirname(dp_outfile_rf)
+    # if dp_dir:
+    #     os.makedirs(dp_dir, exist_ok=True)
+    # plt.savefig(dp_outfile_rf, dpi=256, bbox_inches="tight")
+    # plt.show()
+
+    # NN DP plot
+    dp_outfile_nn = f"{outfile.split('.')[0]}_dp_nn.png"
+    fig_nn, ax_nn = plt.subplots(figsize=(3.5, 3.5))
     dp_nn_np = np.array(dp_values_nn, dtype=float)
-
-    width = 0.35
-    ax_dp.bar(x - width/2, dp_rf_np, width=width, label="RF", color="tab:purple")
-    ax_dp.bar(x + width/2, dp_nn_np, width=width, label="NN+DP", color="tab:gray")
-
-    ax_dp.set_xticks(x)
-    ax_dp.set_xticklabels(criterion_numbers)
-    ax_dp.set_xlabel("criterion")
-    fig_dp.suptitle("Conditional Demographic\nParity gap")
-    ax_dp.legend()
+    ax_nn.bar(x, dp_nn_np, color="tab:gray")
+    ax_nn.set_xticks(x)
+    ax_nn.set_xticklabels(criterion_numbers)
+    ax_nn.set_xlabel("criterion")
+    fig_nn.suptitle("Conditional Demographic\nParity gap (NN+DP)")
 
     plt.tight_layout()
-    dp_dir = os.path.dirname(dp_outfile)
-    if dp_dir:
-        os.makedirs(dp_dir, exist_ok=True)
-    plt.savefig(dp_outfile, dpi=256, bbox_inches="tight")
+    dp_dir_nn = os.path.dirname(dp_outfile_nn)
+    if dp_dir_nn:
+        os.makedirs(dp_dir_nn, exist_ok=True)
+    plt.savefig(dp_outfile_nn, dpi=256, bbox_inches="tight")
     plt.show()
 
 
@@ -1678,9 +1723,9 @@ if __name__ == "__main__":
     # create_plot_2()
     # plot_legend()
     # run_experiment_1()
-    run_experiment_3()
-    run_experiment_2()
+    # run_experiment_3()
+    # run_experiment_2()
     # run_experiment_4()
     # run_experiment_5()
     # run_experiment_6()
-    # run_experiment_7()
+    run_experiment_7()
