@@ -130,18 +130,22 @@ def create_plot_0(
         if a is None:
             X_train, X_test, y_train, y_test, s_train, s_test = train_test_split(
                 X_scaled, y, s,
-                test_size=0.15,
+                test_size=0.3,
                 stratify=stratify_arg,
             )
             a_train, a_test = None, None
         else:
             X_train, X_test, y_train, y_test, s_train, s_test, a_train, a_test = train_test_split(
                 X_scaled, y, s, a,
-                test_size=0.15,
+                test_size=0.3,
                 stratify=stratify_arg,
             )
 
         clf = RandomForestClassifier(
+            n_estimators=20,
+            max_depth=15,
+            shuffle=True,
+            classes=[0, 1],
             epsilon=epsilon
         )
         clf.fit(X_train, y_train)
@@ -231,7 +235,7 @@ def create_plot_0(
         y_train_t = torch.tensor(y_train, dtype=torch.long)
         X_test_t = torch.tensor(X_test, dtype=torch.float32)
         train_ds = TensorDataset(X_train_t, y_train_t)
-        batch_size = min(1000, len(train_ds))
+        batch_size = min(100, len(train_ds))
         train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
         input_dim = X_train.shape[1]
 
@@ -256,7 +260,7 @@ def create_plot_0(
             max_grad_norm = 1.0
             target_epsilon = epsilon
             target_delta = 1e-5
-            epochs = 50
+            epochs = 150
             privacy_engine = PrivacyEngine()
             model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
                 module=model,
@@ -268,7 +272,7 @@ def create_plot_0(
                 max_grad_norm=max_grad_norm,
             )
         else:
-            epochs = 50
+            epochs = 150
         model.train()
         for epoch in range(epochs):
             epoch_loss = 0.0
@@ -413,35 +417,34 @@ def create_plot_0(
     subplot_colors = ["tab:blue", "tab:orange", "tab:green"]
 
     # ---------- main three metrics ----------
-    fig, axes = plt.subplots(
-        nrows=1,
-        ncols=3,
-        figsize=(max(8, num_criteria * 1.5), 3.5),
-        sharex=True
-    )
-    all_rows_np = np.array(all_rows, dtype=float)
-
-    for ax, mlabel, col_idx, color in zip(axes, measure_labels, [0, 1, 2], subplot_colors):
-        vals = all_rows_np[:, col_idx]
-        ax.bar(x, vals, color=color)
-        ax.set_yscale('log')
-        ax.set_title(mlabel)
-        ax.set_xticks(x)
-        ax.set_xticklabels(criterion_numbers)
-
-    for ax in axes:
-        ax.set_xlabel("criterion")
-
-    plt.tight_layout(rect=[0, 0, 1, 0.9])
-
-    dir_name = os.path.dirname(outfile)
-    if dir_name:
-        os.makedirs(dir_name, exist_ok=True)
-    plt.savefig(outfile, dpi=256, bbox_inches="tight")
-    plt.show()
+    # fig, axes = plt.subplots(
+    #     nrows=1,
+    #     ncols=3,
+    #     figsize=(max(8, num_criteria * 1.5), 3.5),
+    #     sharex=True
+    # )
+    # all_rows_np = np.array(all_rows, dtype=float)
+    #
+    # for ax, mlabel, col_idx, color in zip(axes, measure_labels, [0, 1, 2], subplot_colors):
+    #     vals = all_rows_np[:, col_idx]
+    #     ax.bar(x, vals, color=color)
+    #     ax.set_yscale('log')
+    #     ax.set_title(mlabel)
+    #     ax.set_xticks(x)
+    #     ax.set_xticklabels(criterion_numbers)
+    #
+    # for ax in axes:
+    #     ax.set_xlabel("criterion")
+    #
+    # plt.tight_layout(rect=[0, 0, 1, 0.9])
+    #
+    # dir_name = os.path.dirname(outfile)
+    # if dir_name:
+    #     os.makedirs(dir_name, exist_ok=True)
+    # plt.savefig(outfile, dpi=256, bbox_inches="tight")
+    # plt.show()
 
     # ---------- demographic parity plots: RF and NN separately ----------
-
     plt.rcParams.update({
         "axes.titlesize": 18,
         "axes.labelsize": 18,
@@ -468,21 +471,21 @@ def create_plot_0(
     plt.show()
 
     # NN DP plot
-    dp_outfile_nn = f"{outfile.split('.')[0]}_dp_nn.png"
-    fig_nn, ax_nn = plt.subplots(figsize=(3.5, 3.5))
-    dp_nn_np = np.array(dp_values_nn, dtype=float)
-    ax_nn.bar(x, dp_nn_np, color="tab:gray")
-    ax_nn.set_xticks(x)
-    ax_nn.set_xticklabels(criterion_numbers)
-    ax_nn.set_xlabel("criterion")
-    fig_nn.suptitle("Demographic\nParity (NN+DP)")
-
-    plt.tight_layout()
-    dp_dir_nn = os.path.dirname(dp_outfile_nn)
-    if dp_dir_nn:
-        os.makedirs(dp_dir_nn, exist_ok=True)
-    plt.savefig(dp_outfile_nn, dpi=256, bbox_inches="tight")
-    plt.show()
+    # dp_outfile_nn = f"{outfile.split('.')[0]}_dp_nn.png"
+    # fig_nn, ax_nn = plt.subplots(figsize=(3.5, 3.5))
+    # dp_nn_np = np.array(dp_values_nn, dtype=float)
+    # ax_nn.bar(x, dp_nn_np, color="tab:gray")
+    # ax_nn.set_xticks(x)
+    # ax_nn.set_xticklabels(criterion_numbers)
+    # ax_nn.set_xlabel("criterion")
+    # fig_nn.suptitle("Demographic\nParity (NN+DP)")
+    #
+    # plt.tight_layout()
+    # dp_dir_nn = os.path.dirname(dp_outfile_nn)
+    # if dp_dir_nn:
+    #     os.makedirs(dp_dir_nn, exist_ok=True)
+    # plt.savefig(dp_outfile_nn, dpi=256, bbox_inches="tight")
+    # plt.show()
 
 
 def create_plot_1():
@@ -1583,10 +1586,11 @@ def run_experiment_6(
 
 
 if __name__ == "__main__":
+    create_plot_0()
     # create_plot_1()
     # create_plot_2()
     # plot_legend()
-    run_experiment_1()
+    # run_experiment_1()
     # run_experiment_3()
     # run_experiment_2()
     # run_experiment_4()
