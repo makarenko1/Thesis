@@ -1,3 +1,4 @@
+diffprivlib
 disjoint_set
 jax
 matplotlib
