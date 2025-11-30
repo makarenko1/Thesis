@@ -459,9 +459,9 @@ def run_experiment_1(
             flag_timeout = False
             for num_tuples in num_tuples_this_dataset:
                 if flag_timeout or (measure_name == "Proxy RepairMaxSat" and
-                                    (path == "data/census.csv" and num_tuples > 100000) or
+                                    (path == "data/census.csv" and num_tuples >= 100000) or
                                     (path == "data/stackoverflow.csv" and num_tuples > 20000)):
-                    # Skip because Stackoverflow and Census time out
+                    # Skip because Stackoverflow times out on more than 20K tuples and Census on 100K and more
                     print("Skipping iteration due to timeout.")
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
@@ -585,9 +585,10 @@ def run_experiment_2(
             flag_timeout = False
 
             for num_criteria in range(1, len(criteria) + 1):
-                if flag_timeout or (measure_name == "Proxy RepairMaxSat" and path == "data/stackoverflow.csv" and
-                                    num_tuples > 20000):
-                    # Skip because Stackoverflow times out on more than 20K tuples
+                if flag_timeout or (measure_name == "Proxy RepairMaxSat" and
+                                    (path == "data/census.csv" and num_tuples >= 100000 and num_criteria > 2) or
+                                    (path == "data/stackoverflow.csv" and num_tuples > 20000)):
+                    # Skip because Stackoverflow times out on more than 20K tuples and Census on 100K and more with 2 crit
                     print("Skipping next iterations because got timeout for smaller number of criteria.")
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
@@ -703,12 +704,14 @@ def run_experiment_3(
 
         for measure_name, measure_cls in measures.items():
             flag_timeout = False
-            if flag_timeout or (measure_name == "Proxy RepairMaxSat" and path == "data/stackoverflow.csv" and
-                                num_tuples > 20000):
-                # Skip because Stackoverflow times out on more than 20K tuples
-                results[measure_name]["mean"].append(np.nan)
-                results[measure_name]["min"].append(np.nan)
-                results[measure_name]["max"].append(np.nan)
+            if flag_timeout or (measure_name == "Proxy RepairMaxSat" and
+                                    (path == "data/census.csv" and num_tuples >= 100000) or
+                                    (path == "data/stackoverflow.csv" and num_tuples > 20000)):
+                # Skip because Stackoverflow times out on more than 20K tuples and Census on 100K and more
+                for _ in epsilons:
+                    results[measure_name]["mean"].append(np.nan)
+                    results[measure_name]["min"].append(np.nan)
+                    results[measure_name]["max"].append(np.nan)
                 continue
 
             errs_per_eps = [[] for _ in epsilons]
@@ -727,7 +730,7 @@ def run_experiment_3(
                     except TimeoutError:
                         print("Skipping iteration due to timeout.")
                         flag_timeout = True
-                        break
+                        continue
 
                 for j, eps in enumerate(epsilons):
                     if flag_timeout:
