@@ -795,7 +795,7 @@ def run_experiment_3(
 
 
 def run_experiment_4(
-        epsilon: float = None,
+        epsilon: float = 1.0,
         num_tuples: int = 100000,
         repetitions: int = 5,
         outfile: str = "plots/experiment4.png",
@@ -925,8 +925,8 @@ def run_experiment_4(
 
 def run_experiment_5(
     num_tuples=100000,
-    repetitions=10,
-    epsilon=None,
+    repetitions=5,
+    epsilon=1.0,
     outfile="plots/experiment5.png",
 ):
     """TupleContribution value as function of k, sampling separately for each repetition."""
@@ -1058,7 +1058,7 @@ def run_experiment_5(
 
 def run_experiment_6(
     num_tuples=100000,
-    repetitions=10,
+    repetitions=5,
     epsilon=1.0,
     outfile="plots/experiment6.png",
 ):
