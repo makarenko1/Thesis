@@ -105,19 +105,25 @@ class ProxyMutualInformationTVD:
         float
             The proxy MI value for the given attribute pair.
         """
-        num_s = int(np.max(protected_col_values)) + 1
-        num_o = int(np.max(response_col_values)) + 1
-        joint = np.zeros((num_s, num_o))
-        for s, o in zip(protected_col_values, response_col_values):
-            joint[s, o] += 1
-        joint /= len(protected_col_values)
+        s_vals = np.asarray(protected_col_values).astype(np.int64)
+        o_vals = np.asarray(response_col_values).astype(np.int64)
+        if len(s_vals) == 0:
+            return 0.0
+
+        num_s = int(s_vals.max()) + 1
+        num_o = int(o_vals.max()) + 1
+
+        joint = np.zeros((num_s, num_o), dtype=float)
+        for s, o in zip(s_vals, o_vals):
+            joint[s, o] += 1.0
+        joint /= len(s_vals)
 
         p_s = joint.sum(axis=1, keepdims=True)
         p_o = joint.sum(axis=0, keepdims=True)
         expected = p_s @ p_o
 
         tvd = 0.5 * np.sum(np.abs(joint - expected))
-        return 2 * tvd**2
+        return 2 * tvd ** 2
 
     def _calculate_conditional_helper(self, protected_col_values, response_col_values, admissible_col_values):
         """

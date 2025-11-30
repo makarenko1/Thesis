@@ -10,7 +10,7 @@ from matplotlib.ticker import LogLocator
 from opacus import PrivacyEngine
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from torch import nn
+from torch import nn, optim
 from torch.utils.data import DataLoader, TensorDataset
 
 from mutual_information import MutualInformation
@@ -23,8 +23,7 @@ from unused_measures.proxy_mutual_information_privbayes import ProxyMutualInform
 adult_criteria = [["sex", "income>50K", "education-num"], ["sex", "income>50K", "hours-per-week"],
                   ["race", "income>50K", "education-num"], ["race", "income>50K", "hours-per-week"]]
 
-census_criteria = [["HEALTH", "INCTOT", "EDUC"], ["HEALTH", "OCC", "EDUC"], ["HEALTH", "MARST", "AGE"],
-                   ["HEALTH", "INCTOT", "AGE"]]
+census_criteria = [["HEALTH", "INCTOT"], ["INCTOT", "AGE"], ["SEX", "AGE"], ["HEALTH", "OCC", "EDUC"]]
 
 stackoverflow_criteria = [["Country", "RemoteWork", "Employment"], ["Age", "PurchaseInfluence", "OrgSize"],
                           ["Country", "MainBranch", "YearsCodePro"], ["Age", "MainBranch", "EdLevel"]]
@@ -461,8 +460,8 @@ def run_experiment_1(
         for measure_name, measure_cls in measures.items():
             flag_timeout = False
             for num_tuples in num_tuples_this_dataset:
-                if flag_timeout or (measure_name == "Proxy RepairMaxSat" and path == "data/census.csv" and
-                                    num_tuples > 100000):
+                if flag_timeout or (measure_name == "Proxy RepairMaxSat" and (path == "data/census.csv" and
+                                    num_tuples > 100000) or (path == "data/stackoverflow.csv" and num_tuples > 20000)):
                     print("Skipping iteration due to timeout.")
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
@@ -587,6 +586,11 @@ def run_experiment_2(
             flag_timeout = False
 
             for num_criteria in range(1, len(criteria) + 1):
+                num_tuples_to_use = num_tuples
+                if (measure_name == "Proxy RepairMaxSat" and path == "data/stackoverflow.csv" and num_tuples > 20000 and
+                        num_criteria >= 4):
+                    num_tuples_to_use = 20000
+
                 if flag_timeout:
                     print("Skipping next iterations because got timeout for smaller number of criteria.")
                     results[measure_name]["mean"].append(np.nan)
@@ -596,7 +600,7 @@ def run_experiment_2(
 
                 runtimes_rep = []
                 for _ in range(repetitions):
-                    n = min(num_tuples, len(data))
+                    n = min(num_tuples_to_use, len(data))
                     sample = data.sample(n=n, replace=False)
                     m = measure_cls(data=sample)
                     start_time = time.time()
@@ -697,15 +701,19 @@ def run_experiment_3(
             cols_list += criterion
         cols_list = list(dict.fromkeys(cols_list))
         data_full = _encode_and_clean(path, cols_list)
-        n = min(num_tuples, len(data_full))
         results = {
             measure_name: {"mean": [], "min": [], "max": []}
             for measure_name in measures.keys()
         }
 
         for measure_name, measure_cls in measures.items():
+            num_tuples_to_use = num_tuples
+            if measure_name == "Proxy RepairMaxSat" and path == "data/stackoverflow.csv" and num_tuples > 20000:
+                num_tuples_to_use = 20000
+
             flag_timeout = False
             errs_per_eps = [[] for _ in epsilons]
+            n = min(num_tuples_to_use, len(data_full))
             for _ in range(repetitions):
                 if n < len(data_full):
                     sample = data_full.sample(n=n, replace=False)
@@ -1265,83 +1273,273 @@ def _encode_and_clean_dp(data_path: str, criterion_cols: List[str]) -> pd.DataFr
 
 
 def run_experiment_7(
-        epsilon: Optional[float] = None,
+        epsilon: Optional[float] = 1.0,
         num_tuples: int = 5000,
         repetitions: int = 1,
         outfile: str = "plots/experiment7.png",
 ):
     """Values of measures for IPUMS-CPS (for criterions with more unfairness we expect higher values)."""
 
-    def demographic_parity_gap_with_model(df: pd.DataFrame,
-                                          protected_col: str,
-                                          response_col: str,
-                                          random_state: int = 0) -> float:
+    def demographic_parity_gap_with_rf(
+        df: pd.DataFrame,
+        protected_col: str,
+        response_col: str,
+        admissible_col: Optional[str] = None,
+        random_state: int = 0,
+        epsilon_rf: Optional[float] = 1.0,
+    ) -> float:
         """
-        Demographic parity gap based on predictions of a RandomForest
-        trained on MinMax-scaled features, using a train/test split on
-        the FULL given dataframe `df` (no external sampling).
+        Demographic / conditional statistical parity gap based on predictions
+        of a RandomForest trained on MinMax-scaled features, using a
+        train/test split on the FULL given dataframe `df`.
 
-        Steps:
-        - X = all columns except response_col
-        - y = response_col
-        - s = protected_col
-        - MinMaxScale X
-        - train_test_split
-        - Train RandomForestClassifier on train split
-        - Compute DP gap on test predictions:
-          abs(max_a P(Ŷ=1 | S=a) - min_a P(Ŷ=1 | S=a))
+        Noise is added to the training features with scale ∝ 1/epsilon_rf.
+
+        If `admissible_col` is None:
+            DP gap = max_a P(Ŷ=1 | S=a) - min_a P(Ŷ=1 | S=a)
+
+        If `admissible_col` is not None:
+            Conditional DP gap =
+                max_z [ max_s P(Ŷ=1 | S=s, A=z) - min_s P(Ŷ=1 | S=s, A=z) ]
         """
         if df.empty:
             return 0.0
 
         if response_col not in df.columns or protected_col not in df.columns:
             return 0.0
+        if admissible_col is not None and admissible_col not in df.columns:
+            admissible_col = None  # fall back gracefully
 
-        # Features: all columns except response_col
         feature_cols = [c for c in df.columns if c != response_col]
         if not feature_cols:
-            return 0.0  # no features to train on
+            return 0.0
 
         X = df[feature_cols].to_numpy(dtype=float)
         y = df[response_col].to_numpy()
         s = df[protected_col].to_numpy()
+        if admissible_col is not None:
+            a = df[admissible_col].to_numpy()
+        else:
+            a = None
 
         # Scale features
         scaler = MinMaxScaler()
         X_scaled = scaler.fit_transform(X)
 
-        # Train/test split on the full df (no sampling outside)
         stratify_arg = y if len(np.unique(y)) > 1 else None
-        X_train, X_test, y_train, y_test, s_train, s_test = train_test_split(
-            X_scaled, y, s,
-            test_size=0.3,
-            random_state=random_state,
-            stratify=stratify_arg,
-        )
 
-        # Train RF classifier
+        if a is None:
+            X_train, X_test, y_train, y_test, s_train, s_test = train_test_split(
+                X_scaled, y, s,
+                test_size=0.3,
+                random_state=random_state,
+                stratify=stratify_arg,
+            )
+        else:
+            X_train, X_test, y_train, y_test, s_train, s_test, a_train, a_test = train_test_split(
+                X_scaled, y, s, a,
+                test_size=0.3,
+                random_state=random_state,
+                stratify=stratify_arg,
+            )
+
+        # ---- Add noise to training features, scale ∝ 1/epsilon ----
+        if epsilon_rf is None or epsilon_rf <= 0:
+            noise_scale = 0.0
+        else:
+            noise_scale = 1.0 / float(epsilon_rf)
+        if noise_scale > 0.0:
+            noise = np.random.laplace(loc=0.0, scale=noise_scale, size=X_train.shape)
+            X_train_noisy = X_train + noise
+        else:
+            X_train_noisy = X_train
+
+        # Train RF classifier on noisy features
         clf = RandomForestClassifier(
             n_estimators=100,
             random_state=random_state,
             n_jobs=-1,
         )
-        clf.fit(X_train, y_train)
+        clf.fit(X_train_noisy, y_train)
 
-        # Predictions on the test set
+        # Predictions on the (clean) test set
         y_pred = clf.predict(X_test)
-
-        # Pick the "positive" class as max label
         positive_label = np.max(y_pred)
         pos = (y_pred == positive_label).astype(float)
 
-        # Group by protected attribute S on test set
-        rates = pd.Series(pos).groupby(pd.Series(s_test)).mean()
-        return abs(float(rates.max() - rates.min())) if len(rates) > 0 else 0.0
+        if a is None:
+            rates = pd.Series(pos).groupby(pd.Series(s_test)).mean()
+            return float(abs(rates.max() - rates.min())) if len(rates) > 0 else 0.0
+        else:
+            df_eval = pd.DataFrame({
+                "pos": pos,
+                "s": s_test,
+                "a": a_test,
+            })
+            gaps = []
+            for _, grp in df_eval.groupby("a"):
+                rates = grp["pos"].groupby(grp["s"]).mean()
+                if len(rates) > 0:
+                    gaps.append(float(rates.max() - rates.min()))
+            return max(gaps) if gaps else 0.0
+
+    def demographic_parity_gap_with_nn(
+        df: pd.DataFrame,
+        protected_col: str,
+        response_col: str,
+        admissible_col: Optional[str] = None,
+        random_state: int = 0,
+        epsilon_nn: Optional[float] = 1.0,
+        delta: float = 1e-5,
+        epochs: int = 5,
+        batch_size: int = 256,
+        max_grad_norm: float = 1.0,
+    ) -> float:
+        """
+        Same conditional DP definition as above, but using a simple neural
+        network trained with Opacus PrivacyEngine (DP-SGD) with target epsilon.
+        """
+        if df.empty:
+            return 0.0
+
+        if response_col not in df.columns or protected_col not in df.columns:
+            return 0.0
+        if admissible_col is not None and admissible_col not in df.columns:
+            admissible_col = None
+
+        feature_cols = [c for c in df.columns if c != response_col]
+        if not feature_cols:
+            return 0.0
+
+        X = df[feature_cols].to_numpy(dtype=float)
+        y = df[response_col].to_numpy()
+        s = df[protected_col].to_numpy()
+        if admissible_col is not None:
+            a = df[admissible_col].to_numpy()
+        else:
+            a = None
+
+        # Scaling
+        scaler = MinMaxScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        stratify_arg = y if len(np.unique(y)) > 1 else None
+
+        if a is None:
+            X_train, X_test, y_train, y_test, s_train, s_test = train_test_split(
+                X_scaled, y, s,
+                test_size=0.3,
+                random_state=random_state,
+                stratify=stratify_arg,
+            )
+        else:
+            X_train, X_test, y_train, y_test, s_train, s_test, a_train, a_test = train_test_split(
+                X_scaled, y, s, a,
+                test_size=0.3,
+                random_state=random_state,
+                stratify=stratify_arg,
+            )
+
+        # ---- Build simple NN ----
+        torch.manual_seed(random_state)
+        input_dim = X_train.shape[1]
+        num_classes = int(np.max(y_train)) + 1
+
+        class SimpleNN(nn.Module):
+            def __init__(self, in_dim, hidden=64, out_dim=2):
+                super().__init__()
+                self.net = nn.Sequential(
+                    nn.Linear(in_dim, hidden),
+                    nn.ReLU(),
+                    nn.Linear(hidden, hidden),
+                    nn.ReLU(),
+                    nn.Linear(hidden, out_dim),
+                )
+
+            def forward(self, x):
+                return self.net(x)
+
+        model = SimpleNN(input_dim, hidden=64, out_dim=num_classes)
+        optimizer = optim.SGD(model.parameters(), lr=0.05, momentum=0.9)
+        criterion = nn.CrossEntropyLoss()
+
+        # DataLoader
+        X_train_t = torch.tensor(X_train, dtype=torch.float32)
+        y_train_t = torch.tensor(y_train, dtype=torch.long)
+        train_dataset = TensorDataset(X_train_t, y_train_t)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+
+        # ---- Make model private with PrivacyEngine ----
+        if epsilon_nn is None or epsilon_nn <= 0:
+            # No privacy; just train standard
+            privacy_engine = None
+            for _ in range(epochs):
+                model.train()
+                for xb, yb in train_loader:
+                    optimizer.zero_grad()
+                    logits = model(xb)
+                    loss = criterion(logits, yb)
+                    loss.backward()
+                    optimizer.step()
+        else:
+            privacy_engine = PrivacyEngine()
+            model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
+                module=model,
+                optimizer=optimizer,
+                data_loader=train_loader,
+                target_epsilon=float(epsilon_nn),
+                target_delta=delta,
+                epochs=epochs,
+                max_grad_norm=max_grad_norm,
+            )
+
+            for _ in range(epochs):
+                model.train()
+                for xb, yb in train_loader:
+                    optimizer.zero_grad()
+                    logits = model(xb)
+                    loss = criterion(logits, yb)
+                    loss.backward()
+                    optimizer.step()
+
+        # ---- Evaluate on test set ----
+        model.eval()
+        X_test_t = torch.tensor(X_test, dtype=torch.float32)
+        with torch.no_grad():
+            logits = model(X_test_t)
+            y_pred = torch.argmax(logits, dim=1).cpu().numpy()
+
+        positive_label = np.max(y_pred)
+        pos = (y_pred == positive_label).astype(float)
+
+        if a is None:
+            rates = pd.Series(pos).groupby(pd.Series(s_test)).mean()
+            return float(abs(rates.max() - rates.min())) if len(rates) > 0 else 0.0
+        else:
+            df_eval = pd.DataFrame({
+                "pos": pos,
+                "s": s_test,
+                "a": a_test,
+            })
+            gaps = []
+            for _, grp in df_eval.groupby("a"):
+                rates = grp["pos"].groupby(grp["s"]).mean()
+                if len(rates) > 0:
+                    gaps.append(float(rates.max() - rates.min()))
+            return max(gaps) if gaps else 0.0
+
+    # ------------ main experiment ------------
 
     all_rows = []
-    dp_values = []
+    dp_values_rf = []
+    dp_values_nn = []
     path = "data/census.csv"
-    criteria = [["HEALTH", "INCTOT"], ["INCTOT", "AGE"], ["SEX", "AGE"]]
+    criteria = [
+        ["HEALTH", "INCTOT"],
+        ["INCTOT", "AGE"],
+        ["SEX", "AGE"],
+        ["HEALTH", "OCC", "EDUC"],  # conditional criterion
+    ]
 
     plt.rcParams.update({
         "axes.titlesize": 16,
@@ -1357,40 +1555,57 @@ def run_experiment_7(
         sum_tvd = 0.0
         sum_repair = 0.0
         sum_tc = 0.0
-        sum_dp = 0.0
+        sum_dp_rf = 0.0
+        sum_dp_nn = 0.0
 
         for rep in range(repetitions):
+            # Sample from the full DP-preprocessed data for this criterion
             sample = data_full.sample(n=n, replace=False)
             sample_measures = sample[criterion]
 
-            # tvd_proxy = ProxyMutualInformationTVD(data=sample_measures)
-            # sum_tvd += float(tvd_proxy.calculate([criterion], epsilon=epsilon))
-            #
-            # repair_proxy = ProxyRepairMaxSat(data=sample_measures)
-            # sum_repair += float(repair_proxy.calculate([criterion], epsilon=epsilon))
-            #
-            # tc_proxy = TupleContribution(data=sample_measures)
-            # sum_tc += float(tc_proxy.calculate([criterion], epsilon=epsilon))
+            tvd_proxy = ProxyMutualInformationTVD(data=sample_measures)
+            sum_tvd += float(tvd_proxy.calculate([criterion], epsilon=epsilon))
+
+            repair_proxy = ProxyRepairMaxSat(data=sample_measures)
+            sum_repair += float(repair_proxy.calculate([criterion], epsilon=epsilon))
+
+            tc_proxy = TupleContribution(data=sample_measures)
+            sum_tc += float(tc_proxy.calculate([criterion], epsilon=epsilon))
 
             protected_col, response_col = criterion[0], criterion[1]
-            sum_dp += demographic_parity_gap_with_model(
+            admissible_col = criterion[2] if len(criterion) == 3 else None
+
+            sum_dp_rf += demographic_parity_gap_with_rf(
                 df=sample,
                 protected_col=protected_col,
                 response_col=response_col,
+                admissible_col=admissible_col,
                 random_state=rep,
+                epsilon_rf=epsilon,
+            )
+
+            sum_dp_nn += demographic_parity_gap_with_nn(
+                df=sample,
+                protected_col=protected_col,
+                response_col=response_col,
+                admissible_col=admissible_col,
+                random_state=rep,
+                epsilon_nn=epsilon,
             )
 
         tvd_avg = sum_tvd / repetitions
         repair_avg = sum_repair / repetitions
         tc_avg = sum_tc / repetitions
-        dp_avg = sum_dp / repetitions
+        dp_rf_avg = sum_dp_rf / repetitions
+        dp_nn_avg = sum_dp_nn / repetitions
 
         all_rows.append([
             round(tvd_avg, 4),
             repair_avg,
             round(tc_avg, 4),
         ])
-        dp_values.append(dp_avg)
+        dp_values_rf.append(dp_rf_avg)
+        dp_values_nn.append(dp_nn_avg)
 
     num_criteria = len(criteria)
     x = np.arange(num_criteria)
@@ -1401,34 +1616,34 @@ def run_experiment_7(
     subplot_colors = ["tab:blue", "tab:orange", "tab:green"]
 
     # ---------- main three metrics ----------
-    # fig, axes = plt.subplots(
-    #     nrows=1,
-    #     ncols=3,
-    #     figsize=(max(8, num_criteria * 1.5), 3.5),
-    #     sharex=True
-    # )
-    # all_rows_np = np.array(all_rows, dtype=float)
-    #
-    # for ax, mlabel, col_idx, color in zip(axes, measure_labels, [0, 1, 2], subplot_colors):
-    #     vals = all_rows_np[:, col_idx]
-    #     ax.bar(x, vals, color=color)
-    #     ax.set_yscale('log')
-    #     ax.set_title(mlabel)
-    #     ax.set_xticks(x)
-    #     ax.set_xticklabels(criterion_numbers)
-    #
-    # for ax in axes:
-    #     ax.set_xlabel("criterion")
-    #
-    # plt.tight_layout(rect=[0, 0, 1, 0.9])
-    #
-    # dir_name = os.path.dirname(outfile)
-    # if dir_name:
-    #     os.makedirs(dir_name, exist_ok=True)
-    # plt.savefig(outfile, dpi=256, bbox_inches="tight")
-    # plt.show()
+    fig, axes = plt.subplots(
+        nrows=1,
+        ncols=3,
+        figsize=(max(8, num_criteria * 1.5), 3.5),
+        sharex=True
+    )
+    all_rows_np = np.array(all_rows, dtype=float)
 
-    # ---------- demographic parity plot ----------
+    for ax, mlabel, col_idx, color in zip(axes, measure_labels, [0, 1, 2], subplot_colors):
+        vals = all_rows_np[:, col_idx]
+        ax.bar(x, vals, color=color)
+        ax.set_yscale('log')
+        ax.set_title(mlabel)
+        ax.set_xticks(x)
+        ax.set_xticklabels(criterion_numbers)
+
+    for ax in axes:
+        ax.set_xlabel("criterion")
+
+    plt.tight_layout(rect=[0, 0, 1, 0.9])
+
+    dir_name = os.path.dirname(outfile)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+    plt.savefig(outfile, dpi=256, bbox_inches="tight")
+    plt.show()
+
+    # ---------- (conditional) demographic parity plot: RF vs NN ----------
 
     plt.rcParams.update({
         "axes.titlesize": 18,
@@ -1439,13 +1654,19 @@ def run_experiment_7(
     })
 
     dp_outfile = f"{outfile.split('.')[0]}_dp.png"
-    fig_dp, ax_dp = plt.subplots(figsize=(3.5, 3.5))
-    dp_vals_np = np.array(dp_values, dtype=float)
-    ax_dp.bar(x, dp_vals_np, color="tab:purple")
+    fig_dp, ax_dp = plt.subplots(figsize=(4.5, 3.5))
+    dp_rf_np = np.array(dp_values_rf, dtype=float)
+    dp_nn_np = np.array(dp_values_nn, dtype=float)
+
+    width = 0.35
+    ax_dp.bar(x - width/2, dp_rf_np, width=width, label="RF", color="tab:purple")
+    ax_dp.bar(x + width/2, dp_nn_np, width=width, label="NN+DP", color="tab:gray")
+
     ax_dp.set_xticks(x)
     ax_dp.set_xticklabels(criterion_numbers)
     ax_dp.set_xlabel("criterion")
-    fig_dp.suptitle("Demographic Parity\ngap")
+    fig_dp.suptitle("Conditional Demographic\nParity gap")
+    ax_dp.legend()
 
     plt.tight_layout()
     dp_dir = os.path.dirname(dp_outfile)
@@ -1459,10 +1680,10 @@ if __name__ == "__main__":
     # create_plot_1()
     # create_plot_2()
     # plot_legend()
-    run_experiment_1()
-    run_experiment_2()
-    run_experiment_3()
+    # run_experiment_1()
+    # run_experiment_2()
+    # run_experiment_3()
     # run_experiment_4()
     # run_experiment_5()
     # run_experiment_6()
-    # run_experiment_7()
+    run_experiment_7()
