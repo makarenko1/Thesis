@@ -11,7 +11,7 @@ from matplotlib.lines import Line2D as MplLine2D
 from matplotlib.ticker import LogLocator, FuncFormatter
 from opacus import PrivacyEngine
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import log_loss, accuracy_score
+from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from torch import nn
@@ -455,9 +455,9 @@ def run_experiment_1(
             flag_timeout = False
             for num_tuples in num_tuples_this_dataset:
                 if flag_timeout or (measure_name == "Proxy RepairMaxSat" and
-                                    (path == "data/census.csv" and num_tuples >= 100000) or
+                                    (path == "data/census.csv" and num_tuples > 100000) or
                                     (path == "data/stackoverflow.csv" and num_tuples > 20000)):
-                    # Skip because Stackoverflow times out on more than 20K tuples and Census on 100K and more
+                    # Skip because Stackoverflow times out on more than 20K tuples and Census more than 100K
                     print("Skipping iteration due to timeout.")
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
@@ -582,9 +582,8 @@ def run_experiment_2(
 
             for num_criteria in range(1, len(criteria) + 1):
                 if flag_timeout or (measure_name == "Proxy RepairMaxSat" and
-                                    (path == "data/census.csv" and num_tuples >= 100000 and num_criteria > 2) or
                                     (path == "data/stackoverflow.csv" and num_tuples > 20000)):
-                    # Skip because Stackoverflow times out on more than 20K tuples and Census on 100K and more with 2 crit
+                    # Skip because Stackoverflow times out on more than 20K tuples
                     print("Skipping next iterations because got timeout for smaller number of criteria.")
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
@@ -701,9 +700,8 @@ def run_experiment_3(
         for measure_name, measure_cls in measures.items():
             flag_timeout = False
             if flag_timeout or (measure_name == "Proxy RepairMaxSat" and
-                                    (path == "data/census.csv" and num_tuples >= 100000) or
                                     (path == "data/stackoverflow.csv" and num_tuples > 20000)):
-                # Skip because Stackoverflow times out on more than 20K tuples and Census on 100K and more
+                # Skip because Stackoverflow times out on more than 20K tuples
                 for _ in epsilons:
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
@@ -1723,9 +1721,9 @@ if __name__ == "__main__":
     # create_plot_2()
     # plot_legend()
     # run_experiment_1()
-    # run_experiment_3()
-    # run_experiment_2()
+    run_experiment_2()
+    run_experiment_3()
     # run_experiment_4()
     # run_experiment_5()
     # run_experiment_6()
-    run_experiment_7()
+    # run_experiment_7()
