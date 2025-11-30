@@ -417,32 +417,32 @@ def create_plot_0(
     subplot_colors = ["tab:blue", "tab:orange", "tab:green"]
 
     # ---------- main three metrics ----------
-    # fig, axes = plt.subplots(
-    #     nrows=1,
-    #     ncols=3,
-    #     figsize=(max(8, num_criteria * 1.5), 3.5),
-    #     sharex=True
-    # )
-    # all_rows_np = np.array(all_rows, dtype=float)
-    #
-    # for ax, mlabel, col_idx, color in zip(axes, measure_labels, [0, 1, 2], subplot_colors):
-    #     vals = all_rows_np[:, col_idx]
-    #     ax.bar(x, vals, color=color)
-    #     ax.set_yscale('log')
-    #     ax.set_title(mlabel)
-    #     ax.set_xticks(x)
-    #     ax.set_xticklabels(criterion_numbers)
-    #
-    # for ax in axes:
-    #     ax.set_xlabel("criterion")
-    #
-    # plt.tight_layout(rect=[0, 0, 1, 0.9])
-    #
-    # dir_name = os.path.dirname(outfile)
-    # if dir_name:
-    #     os.makedirs(dir_name, exist_ok=True)
-    # plt.savefig(outfile, dpi=256, bbox_inches="tight")
-    # plt.show()
+    fig, axes = plt.subplots(
+        nrows=1,
+        ncols=3,
+        figsize=(max(8, num_criteria * 1.5), 3.5),
+        sharex=True
+    )
+    all_rows_np = np.array(all_rows, dtype=float)
+
+    for ax, mlabel, col_idx, color in zip(axes, measure_labels, [0, 1, 2], subplot_colors):
+        vals = all_rows_np[:, col_idx]
+        ax.bar(x, vals, color=color)
+        ax.set_yscale('log')
+        ax.set_title(mlabel)
+        ax.set_xticks(x)
+        ax.set_xticklabels(criterion_numbers)
+
+    for ax in axes:
+        ax.set_xlabel("criterion")
+
+    plt.tight_layout(rect=[0, 0, 1, 0.9])
+
+    dir_name = os.path.dirname(outfile)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+    plt.savefig(outfile, dpi=256, bbox_inches="tight")
+    plt.show()
 
     # ---------- demographic parity plots: RF and NN separately ----------
     plt.rcParams.update({
@@ -471,21 +471,21 @@ def create_plot_0(
     plt.show()
 
     # NN DP plot
-    # dp_outfile_nn = f"{outfile.split('.')[0]}_dp_nn.png"
-    # fig_nn, ax_nn = plt.subplots(figsize=(3.5, 3.5))
-    # dp_nn_np = np.array(dp_values_nn, dtype=float)
-    # ax_nn.bar(x, dp_nn_np, color="tab:gray")
-    # ax_nn.set_xticks(x)
-    # ax_nn.set_xticklabels(criterion_numbers)
-    # ax_nn.set_xlabel("criterion")
-    # fig_nn.suptitle("Demographic\nParity (NN+DP)")
-    #
-    # plt.tight_layout()
-    # dp_dir_nn = os.path.dirname(dp_outfile_nn)
-    # if dp_dir_nn:
-    #     os.makedirs(dp_dir_nn, exist_ok=True)
-    # plt.savefig(dp_outfile_nn, dpi=256, bbox_inches="tight")
-    # plt.show()
+    dp_outfile_nn = f"{outfile.split('.')[0]}_dp_nn.png"
+    fig_nn, ax_nn = plt.subplots(figsize=(3.5, 3.5))
+    dp_nn_np = np.array(dp_values_nn, dtype=float)
+    ax_nn.bar(x, dp_nn_np, color="tab:gray")
+    ax_nn.set_xticks(x)
+    ax_nn.set_xticklabels(criterion_numbers)
+    ax_nn.set_xlabel("criterion")
+    fig_nn.suptitle("Demographic\nParity (NN+DP)")
+
+    plt.tight_layout()
+    dp_dir_nn = os.path.dirname(dp_outfile_nn)
+    if dp_dir_nn:
+        os.makedirs(dp_dir_nn, exist_ok=True)
+    plt.savefig(dp_outfile_nn, dpi=256, bbox_inches="tight")
+    plt.show()
 
 
 def create_plot_1():
