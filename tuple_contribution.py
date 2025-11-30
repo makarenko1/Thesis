@@ -21,7 +21,7 @@ class TupleContribution:
             raise ValueError("Usage: pass exactly one of datapath or data")
         self.dataset = pd.read_csv(datapath) if datapath is not None else data.copy()
 
-    def calculate(self, fairness_criteria, k=250, epsilon=None, encode_and_clean=False):
+    def calculate(self, fairness_criteria, k=500, epsilon=None, encode_and_clean=False):
         """
         Compute the top-k unsigned marginal differences for each fairness criterion.
 
@@ -143,8 +143,11 @@ class TupleContribution:
         p_protected_response[mask_a] = C[mask_a] / N_admissible[mask_a, None, None]  # P(S,O|a)
         p_protected = p_protected_response.sum(axis=2, keepdims=True)                # P(S|a)
         p_response = p_protected_response.sum(axis=1, keepdims=True)                 # P(O|a)
+        p_admissible = np.zeros_like(N_admissible, dtype=float)
+        p_admissible[mask_a] = N_admissible[mask_a] / float(admissible_col_values.shape[0])  # P(A)
         MD = np.abs(p_protected_response - p_protected * p_response)                 # residuals per (a,s,o)
+        MD_weighted = MD * p_admissible[:, None, None]
 
         # Extract only observed cells to define tuples + multiplicities
         admissible_idx, protected_idx, response_idx = np.nonzero(C)  # multiplicity for each unique (s,o,a)
-        return MD[admissible_idx, protected_idx, response_idx]
+        return MD_weighted[admissible_idx, protected_idx, response_idx]

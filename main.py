@@ -10,8 +10,8 @@ from matplotlib import pyplot as plt
 from matplotlib.lines import Line2D as MplLine2D
 from matplotlib.ticker import LogLocator, FuncFormatter
 from opacus import PrivacyEngine
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import log_loss, accuracy_score
+from diffprivlib.models import RandomForestClassifier
+from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from torch import nn
@@ -23,10 +23,11 @@ from proxy_repair_maxsat import ProxyRepairMaxSat
 from tuple_contribution import TupleContribution
 from unused_measures.proxy_mutual_information_privbayes import ProxyMutualInformationPrivbayes
 
-adult_criteria = [["sex", "income>50K", "education-num"], ["sex", "income>50K", "hours-per-week"],
-                  ["race", "income>50K", "education-num"], ["race", "income>50K", "hours-per-week"]]
+adult_criteria = [["education-num", "income>50K"], ["sex", "income>50K"], ["race", "income>50K"],
+                  ["sex", "income>50K", "hours-per-week"]]
 
-census_criteria = [["HEALTH", "INCTOT"], ["INCTOT", "AGE"], ["SEX", "AGE"], ["HEALTH", "OCC", "EDUC"]]
+census_criteria = [["HEALTH", "INCTOT", "EDUC"], ["HEALTH", "OCC", "EDUC"], ["HEALTH", "MARST", "AGE"],
+                   ["HEALTH", "INCTOT", "AGE"]]
 
 stackoverflow_criteria = [["Country", "RemoteWork", "Employment"], ["Age", "PurchaseInfluence", "OrgSize"],
                           ["Country", "MainBranch", "YearsCodePro"], ["Age", "MainBranch", "EdLevel"]]
@@ -81,6 +82,409 @@ def _yfmt(y, pos):
     s = s.rstrip('0').rstrip('.')
     return s
 y_formatter = FuncFormatter(_yfmt)
+
+
+def create_plot_0(
+        epsilon: Optional[float] = 10.0,
+        num_tuples: int = 5000,
+        repetitions: int = 3,
+        outfile: str = "plots/plot0.png",
+):
+    """Values of measures for IPUMS-CPS (for criterions with more unfairness we expect higher values)."""
+
+    def demographic_parity_with_rf(
+            df: pd.DataFrame,
+            protected_col: str,
+            response_col: str,
+            admissible_col: Optional[str] = None
+    ) -> Tuple[float, float]:
+        """
+        Demographic parity (or conditional statistical parity for conditional criteria) with a RandomForest
+        classifier. Returns (dp_gap, rf_loss), where rf_loss is 1 - accuracy on test.
+        """
+        if df.empty:
+            return 0.0, 0.0
+        if response_col not in df.columns or protected_col not in df.columns:
+            return 0.0, 0.0
+        if admissible_col is not None and admissible_col not in df.columns:
+            admissible_col = None
+        feature_cols = [c for c in df.columns if c != response_col]
+        if not feature_cols:
+            return 0.0, 0.0
+
+        X = df[feature_cols].to_numpy(dtype=float)
+        y = df[response_col].to_numpy()
+        s = df[protected_col].to_numpy()
+        if admissible_col is not None:
+            a = df[admissible_col].to_numpy()
+        else:
+            a = None
+        scaler = MinMaxScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        unique_labels, counts = np.unique(y, return_counts=True)
+        if len(unique_labels) <= 1 or counts.min() < 2:
+            stratify_arg = None
+        else:
+            stratify_arg = y
+        if a is None:
+            X_train, X_test, y_train, y_test, s_train, s_test = train_test_split(
+                X_scaled, y, s,
+                test_size=0.15,
+                stratify=stratify_arg,
+            )
+            a_train, a_test = None, None
+        else:
+            X_train, X_test, y_train, y_test, s_train, s_test, a_train, a_test = train_test_split(
+                X_scaled, y, s, a,
+                test_size=0.15,
+                stratify=stratify_arg,
+            )
+
+        clf = RandomForestClassifier(
+            epsilon=epsilon,
+            n_estimators=300
+        )
+        clf.fit(X_train, y_train)
+        y_pred = clf.predict(X_test)
+        positive_label = 1
+        pos = (y_pred == positive_label).astype(float)
+        rf_loss = 1.0 - accuracy_score(y_test, y_pred)
+
+        if a is None:
+            rates = pd.Series(pos).groupby(pd.Series(s_test)).mean()
+            dp_gap = float(abs(rates.max() - rates.min())) if len(rates) > 0 else 0.0
+        else:
+            df_eval = pd.DataFrame({
+                "pos": pos,
+                "s": s_test,
+                "a": a_test,
+            })
+            gaps = []
+            weights = []
+            for a_val, grp in df_eval.groupby("a"):
+                rates = grp["pos"].groupby(grp["s"]).mean()
+                dp_a = rates.max() - rates.min()
+                gaps.append(dp_a)
+                weights.append(len(grp))
+            # Weighted average DP-gap:
+            dp_gap = np.average(gaps, weights=weights) if gaps else 0.0
+
+        return dp_gap, rf_loss
+
+    def demographic_parity_with_nn(
+            df: pd.DataFrame,
+            protected_col: str,
+            response_col: str,
+            admissible_col: Optional[str] = None
+    ) -> Tuple[float, float]:
+        """
+        Demographic parity (or conditional statistical parity for conditional criteria) with a small neural net trained
+        with DP-SGD (via Opacus PrivacyEngine).
+
+        Returns (dp_gap, nn_loss), where nn_loss is 1 - accuracy on test.
+        """
+        if df.empty:
+            return 0.0, 0.0
+        if response_col not in df.columns or protected_col not in df.columns:
+            return 0.0, 0.0
+        if admissible_col is not None and admissible_col not in df.columns:
+            admissible_col = None
+        feature_cols = [c for c in df.columns if c != response_col]
+        if not feature_cols:
+            return 0.0, 0.0
+
+        X = df[feature_cols].to_numpy(dtype=float)
+        y_raw = df[response_col].to_numpy()
+        s = df[protected_col].to_numpy()
+        a = df[admissible_col].to_numpy() if admissible_col is not None else None
+        le = LabelEncoder()
+        y_enc = le.fit_transform(y_raw).astype(np.int64)
+        num_classes = len(le.classes_)
+        if num_classes < 2:
+            return 0.0, 0.0
+
+        scaler = MinMaxScaler()
+        X_scaled = scaler.fit_transform(X)
+        unique_labels, counts = np.unique(y_enc, return_counts=True)
+        if len(unique_labels) <= 1 or counts.min() < 2:
+            stratify_arg = None
+        else:
+            stratify_arg = y_enc
+
+        if a is None:
+            X_train, X_test, y_train, y_test, s_train, s_test = train_test_split(
+                X_scaled, y_enc, s,
+                test_size=0.15,
+                stratify=stratify_arg,
+            )
+            a_train = a_test = None
+        else:
+            X_train, X_test, y_train, y_test, s_train, s_test, a_train, a_test = train_test_split(
+                X_scaled, y_enc, s, a,
+                test_size=0.15,
+                stratify=stratify_arg,
+            )
+
+        # ---- DP-SGD NN training ----
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        X_train_t = torch.tensor(X_train, dtype=torch.float32)
+        y_train_t = torch.tensor(y_train, dtype=torch.long)
+        X_test_t = torch.tensor(X_test, dtype=torch.float32)
+        train_ds = TensorDataset(X_train_t, y_train_t)
+        batch_size = min(1000, len(train_ds))
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+        input_dim = X_train.shape[1]
+
+        class SimpleNN(nn.Module):
+            def __init__(self, d_in, d_hidden=32, num_classes=2):
+                super().__init__()
+                self.net = nn.Sequential(
+                    nn.Linear(d_in, d_hidden),
+                    nn.ReLU(),
+                    nn.Linear(d_hidden, num_classes),
+                )
+
+            def forward(self, x):
+                return self.net(x)
+
+        model = SimpleNN(input_dim, d_hidden=32, num_classes=num_classes).to(device)
+        criterion = nn.CrossEntropyLoss()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.05, momentum=0.9)
+
+        # Attach PrivacyEngine (DP-SGD)
+        if epsilon is not None:
+            max_grad_norm = 1.0
+            target_epsilon = epsilon
+            target_delta = 1e-5
+            epochs = 50
+            privacy_engine = PrivacyEngine()
+            model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
+                module=model,
+                optimizer=optimizer,
+                data_loader=train_loader,
+                target_epsilon=target_epsilon,
+                target_delta=target_delta,
+                epochs=epochs,
+                max_grad_norm=max_grad_norm,
+            )
+        else:
+            epochs = 50
+        model.train()
+        for epoch in range(epochs):
+            epoch_loss = 0.0
+            n_batches = 0
+            for xb, yb in train_loader:
+                xb = xb.to(device)
+                yb = yb.to(device)
+                optimizer.zero_grad()
+                logits = model(xb)
+                loss = criterion(logits, yb)
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+                n_batches += 1
+
+        model.eval()
+        with torch.no_grad():
+            logits_test = model(X_test_t.to(device))
+            y_pred = torch.argmax(logits_test, dim=1).cpu().numpy()
+        positive_label = 1
+        pos = (y_pred == positive_label).astype(float)
+        nn_loss = 1.0 - accuracy_score(y_test, y_pred)
+
+        if a is None:
+            rates = pd.Series(pos).groupby(pd.Series(s_test)).mean()
+            dp_gap = float(abs(rates.max() - rates.min())) if len(rates) > 0 else 0.0
+        else:
+            df_eval = pd.DataFrame({
+                "pos": pos,
+                "s": s_test,
+                "a": a_test,
+            })
+            gaps = []
+            weights = []
+            for a_val, grp in df_eval.groupby("a"):
+                rates = grp["pos"].groupby(grp["s"]).mean()
+                dp_a = rates.max() - rates.min()
+                gaps.append(dp_a)
+                weights.append(len(grp))
+            # Weighted average DP-gap:
+            dp_gap = np.average(gaps, weights=weights) if gaps else 0.0
+
+        return dp_gap, nn_loss
+
+    # ------------ main experiment ------------
+
+    all_rows = []
+    dp_values_rf = []
+    dp_values_nn = []
+    rf_losses_avg = []
+    nn_losses_avg = []
+
+    path = "data/adult.csv"
+    criteria = adult_criteria  # assumed defined elsewhere
+
+    plt.rcParams.update({
+        "axes.titlesize": 16,
+        "axes.labelsize": 16,
+        "xtick.labelsize": 14,
+        "ytick.labelsize": 14,
+    })
+
+    for crit_idx, criterion in enumerate(criteria, start=1):
+        df = pd.read_csv(path)
+        data_full = _encode_and_clean(path, df.columns)
+        data = _encode_and_clean(path, criterion)
+        n = min(num_tuples, len(data))
+
+        sum_tvd = 0.0
+        sum_repair = 0.0
+        sum_tc = 0.0
+        sum_dp_rf = 0.0
+        sum_dp_nn = 0.0
+        sum_loss_rf = 0.0
+        sum_loss_nn = 0.0
+
+        for rep in range(repetitions):
+            sample = data_full.sample(n=n, replace=False)
+            sample_measures = sample[criterion]
+
+            tvd_proxy = ProxyMutualInformationTVD(data=sample_measures)
+            sum_tvd += float(tvd_proxy.calculate([criterion], epsilon=epsilon))
+
+            repair_proxy = ProxyRepairMaxSat(data=sample_measures)
+            sum_repair += float(repair_proxy.calculate([criterion], epsilon=epsilon))
+
+            tc_proxy = TupleContribution(data=sample_measures)
+            sum_tc += float(tc_proxy.calculate([criterion], epsilon=epsilon))
+
+            protected_col, response_col = criterion[0], criterion[1]
+            admissible_col = criterion[2] if len(criterion) == 3 else None
+
+            dp_rf, loss_rf = demographic_parity_with_rf(
+                df=sample,
+                protected_col=protected_col,
+                response_col=response_col,
+                admissible_col=admissible_col
+            )
+            dp_nn, loss_nn = demographic_parity_with_nn(
+                df=sample,
+                protected_col=protected_col,
+                response_col=response_col,
+                admissible_col=admissible_col,
+            )
+
+            sum_dp_rf += dp_rf
+            sum_dp_nn += dp_nn
+            sum_loss_rf += loss_rf
+            sum_loss_nn += loss_nn
+
+        tvd_avg = sum_tvd / repetitions
+        repair_avg = sum_repair / repetitions
+        tc_avg = sum_tc / repetitions
+        dp_rf_avg = sum_dp_rf / repetitions
+        dp_nn_avg = sum_dp_nn / repetitions
+        rf_loss_avg = sum_loss_rf / repetitions
+        nn_loss_avg = sum_loss_nn / repetitions
+
+        all_rows.append([
+            round(tvd_avg, 4),
+            repair_avg,
+            round(tc_avg, 4),
+        ])
+        dp_values_rf.append(dp_rf_avg)
+        dp_values_nn.append(dp_nn_avg)
+        rf_losses_avg.append(rf_loss_avg)
+        nn_losses_avg.append(nn_loss_avg)
+
+        print(
+            f"Criterion {criterion}: "
+            f"RF avg loss = {rf_loss_avg:.4f}, NN avg loss = {nn_loss_avg:.4f}"
+        )
+
+        print(
+            f"Criterion {criterion}: "
+            f"RF acc = {1 - rf_loss_avg:.4f}, NN acc = {1 - nn_loss_avg:.4f}"
+        )
+
+    num_criteria = len(criteria)
+    x = np.arange(num_criteria)
+    criterion_numbers = [str(i) for i in range(1, num_criteria + 1)]
+    measure_labels = ["Proxy\nMutualInformationTVD", "Proxy\nRepairMaxSAT", "TupleContribution"]
+    subplot_colors = ["tab:blue", "tab:orange", "tab:green"]
+
+    # ---------- main three metrics ----------
+    fig, axes = plt.subplots(
+        nrows=1,
+        ncols=3,
+        figsize=(max(8, num_criteria * 1.5), 3.5),
+        sharex=True
+    )
+    all_rows_np = np.array(all_rows, dtype=float)
+
+    for ax, mlabel, col_idx, color in zip(axes, measure_labels, [0, 1, 2], subplot_colors):
+        vals = all_rows_np[:, col_idx]
+        ax.bar(x, vals, color=color)
+        ax.set_yscale('log')
+        ax.set_title(mlabel)
+        ax.set_xticks(x)
+        ax.set_xticklabels(criterion_numbers)
+
+    for ax in axes:
+        ax.set_xlabel("criterion")
+
+    plt.tight_layout(rect=[0, 0, 1, 0.9])
+
+    dir_name = os.path.dirname(outfile)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+    plt.savefig(outfile, dpi=256, bbox_inches="tight")
+    plt.show()
+
+    # ---------- demographic parity plots: RF and NN separately ----------
+
+    plt.rcParams.update({
+        "axes.titlesize": 18,
+        "axes.labelsize": 18,
+        "xtick.labelsize": 16,
+        "ytick.labelsize": 16,
+        "figure.titlesize": 18,
+    })
+
+    # RF DP plot
+    dp_outfile_rf = f"{outfile.split('.')[0]}_dp_rf.png"
+    fig_rf, ax_rf = plt.subplots(figsize=(3.5, 3.5))
+    dp_rf_np = np.array(dp_values_rf, dtype=float)
+    ax_rf.bar(x, dp_rf_np, color="tab:purple")
+    ax_rf.set_xticks(x)
+    ax_rf.set_xticklabels(criterion_numbers)
+    ax_rf.set_xlabel("criterion")
+    fig_rf.suptitle("Demographic\nParity (RF)")
+
+    plt.tight_layout()
+    dp_dir = os.path.dirname(dp_outfile_rf)
+    if dp_dir:
+        os.makedirs(dp_dir, exist_ok=True)
+    plt.savefig(dp_outfile_rf, dpi=256, bbox_inches="tight")
+    plt.show()
+
+    # NN DP plot
+    dp_outfile_nn = f"{outfile.split('.')[0]}_dp_nn.png"
+    fig_nn, ax_nn = plt.subplots(figsize=(3.5, 3.5))
+    dp_nn_np = np.array(dp_values_nn, dtype=float)
+    ax_nn.bar(x, dp_nn_np, color="tab:gray")
+    ax_nn.set_xticks(x)
+    ax_nn.set_xticklabels(criterion_numbers)
+    ax_nn.set_xlabel("criterion")
+    fig_nn.suptitle("Demographic\nParity (NN+DP)")
+
+    plt.tight_layout()
+    dp_dir_nn = os.path.dirname(dp_outfile_nn)
+    if dp_dir_nn:
+        os.makedirs(dp_dir_nn, exist_ok=True)
+    plt.savefig(dp_outfile_nn, dpi=256, bbox_inches="tight")
+    plt.show()
 
 
 def create_plot_1():
@@ -1179,543 +1583,8 @@ def run_experiment_6(
     plt.show()
 
 
-def _encode_and_clean_dp(data_path: str, criterion_cols: List[str]) -> pd.DataFrame:
-    """
-    DP-specific cleaner.
-
-    - Read CSV and replace ["NA", "N/A", ""] with NaN.
-    - Convert numeric-like columns to numeric, mark illegal values as NaN:
-        * All numeric: negative values -> NaN
-        * For data/census.csv and INCTOT: values > 200000 -> NaN
-    - Then:
-        * For columns in `criterion_cols`: we DROP rows with NaNs in these columns.
-        * For other numeric columns: fill NaNs with column mean.
-    - For data/census.csv:
-        * AGE bucketed into 10-year bins:
-              1–10 -> 10, 11–20 -> 20, ...
-        * INCTOT discretized into 10k buckets:
-              0–9999 -> 0, 10000–19999 -> 10000, ...
-    - Finally, label-encode all non-numeric columns.
-    """
-    df = pd.read_csv(data_path)
-    df = df.replace(["NA", "N/A", ""], pd.NA).copy()
-
-    # --- Step 1: numeric cleaning and illegal -> NaN ---
-    for c in df.columns:
-        # Try treating as numeric if it is numeric or object
-        if pd.api.types.is_numeric_dtype(df[c]) or df[c].dtype == object:
-            vals = pd.to_numeric(df[c], errors="coerce")
-
-            # Census-specific INCTOT > 200000 illegal
-            if data_path == "data/census.csv" and c == "INCTOT":
-                vals = vals.mask(vals > 200000, np.nan)
-
-            # Negative values illegal for any numeric
-            vals = vals.mask(vals < 0, np.nan)
-
-            df[c] = vals
-
-    # --- Step 2: drop rows with NaN in criterion columns ---
-    crit_cols_present = [c for c in criterion_cols if c in df.columns]
-    if crit_cols_present:
-        df = df.dropna(subset=crit_cols_present)
-
-    # --- Step 3: fill NaNs with mean for NON-criterion numeric columns ---
-    for c in df.columns:
-        if c in crit_cols_present:
-            continue  # do not impute criterion columns
-        if pd.api.types.is_numeric_dtype(df[c]):
-            if df[c].isna().any():
-                mean_val = df[c].mean(skipna=True)
-                if not np.isnan(mean_val):
-                    df[c] = df[c].fillna(mean_val)
-
-    # --- Step 4: census-specific discretization (after cleaning/imputation) ---
-    if data_path == "data/census.csv":
-        # AGE: bucket into size-10 bins
-        if "AGE" in df.columns:
-            age = pd.to_numeric(df["AGE"], errors="coerce")
-            # If anything invalid appears here, treat <1 as NaN and re-impute safely
-            age = age.mask(age < 1, np.nan)
-            # For AGE as criterion we don't want NaNs; since we already dropped on crit,
-            # any NaNs now are from this masking; we can safely fill with mean of valid.
-            mean_age = age.mean(skipna=True)
-            if not np.isnan(mean_age):
-                age = age.fillna(mean_age)
-            age = (((age - 1) // 10) + 1) * 10
-            df["AGE"] = age
-
-        # INCTOT: discretize into 10k buckets
-        if "INCTOT" in df.columns:
-            inctot = pd.to_numeric(df["INCTOT"], errors="coerce")
-            # If any NaN slipped in, fill with mean, respecting criterion behavior already applied
-            mean_inc = inctot.mean(skipna=True)
-            if not np.isnan(mean_inc):
-                inctot = inctot.fillna(mean_inc)
-            df["INCTOT"] = (inctot // 10000) * 10000
-
-    # --- Step 5: label-encode non-numeric columns ---
-    for c in df.columns:
-        if not pd.api.types.is_numeric_dtype(df[c]):
-            df[c] = LabelEncoder().fit_transform(df[c].astype(str))
-
-    return df
-
-
-def run_experiment_7(
-        epsilon: Optional[float] = 1.0,
-        num_tuples: int = 10000,
-        repetitions: int = 3,
-        outfile: str = "plots/experiment7.png",
-):
-    """Values of measures for IPUMS-CPS (for criterions with more unfairness we expect higher values)."""
-
-    def demographic_parity_gap_with_rf(
-            df: pd.DataFrame,
-            protected_col: str,
-            response_col: str,
-            admissible_col: Optional[str] = None,
-            random_state: int = 0,
-            epsilon_rf: float = 1.0,
-    ) -> Tuple[float, float]:
-        """
-        (Conditional) demographic parity gap with a RandomForest classifier.
-        Returns (dp_gap, rf_loss), where rf_loss is log-loss on test
-        (or 1 - accuracy as fallback).
-        """
-        if df.empty:
-            return 0.0, 0.0
-
-        if response_col not in df.columns or protected_col not in df.columns:
-            return 0.0, 0.0
-        if admissible_col is not None and admissible_col not in df.columns:
-            admissible_col = None
-
-        # Features: all columns except response_col
-        feature_cols = [c for c in df.columns if c != response_col]
-        if not feature_cols:
-            return 0.0, 0.0
-
-        X = df[feature_cols].to_numpy(dtype=float)
-        y = df[response_col].to_numpy()
-        s = df[protected_col].to_numpy()
-        if admissible_col is not None:
-            a = df[admissible_col].to_numpy()
-        else:
-            a = None
-
-        # Optional: add Gaussian noise to features (scaled by epsilon_rf)
-        if epsilon_rf is not None and epsilon_rf > 0:
-            sigma = 1.0 / float(epsilon_rf)
-            X = X + np.random.normal(loc=0.0, scale=sigma, size=X.shape)
-
-        # Scale features
-        scaler = MinMaxScaler()
-        X_scaled = scaler.fit_transform(X)
-
-        # Robust stratify handling
-        unique_labels, counts = np.unique(y, return_counts=True)
-        if len(unique_labels) <= 1 or counts.min() < 2:
-            stratify_arg = None
-        else:
-            stratify_arg = y
-
-        # Train/test split
-        if a is None:
-            X_train, X_test, y_train, y_test, s_train, s_test = train_test_split(
-                X_scaled, y, s,
-                test_size=0.15,
-                random_state=random_state,
-                stratify=stratify_arg,
-            )
-            a_train, a_test = None, None
-        else:
-            X_train, X_test, y_train, y_test, s_train, s_test, a_train, a_test = train_test_split(
-                X_scaled, y, s, a,
-                test_size=0.15,
-                random_state=random_state,
-                stratify=stratify_arg,
-            )
-
-        # Train RF
-        clf = RandomForestClassifier(
-            n_estimators=100,
-            random_state=random_state,
-            n_jobs=-1,
-        )
-        clf.fit(X_train, y_train)
-
-        # Predict on test
-        y_pred = clf.predict(X_test)
-        positive_label = np.max(y_pred)
-        pos = (y_pred == positive_label).astype(float)
-
-        # RF loss in [0, 1]: 1 - accuracy on test
-        rf_loss = 1.0 - accuracy_score(y_test, y_pred)
-
-        if a is None:
-            # Unconditional DP
-            rates = pd.Series(pos).groupby(pd.Series(s_test)).mean()
-            dp_gap = float(abs(rates.max() - rates.min())) if len(rates) > 0 else 0.0
-        else:
-            # Conditional DP: worst admissible group
-            df_eval = pd.DataFrame({
-                "pos": pos,
-                "s": s_test,
-                "a": a_test,
-            })
-            gaps = []
-            for _, grp in df_eval.groupby("a"):
-                rates = grp["pos"].groupby(grp["s"]).mean()
-                if len(rates) > 0:
-                    gaps.append(float(rates.max() - rates.min()))
-            dp_gap = max(gaps) if gaps else 0.0
-
-        return dp_gap, rf_loss
-
-    def demographic_parity_gap_with_nn(
-            df: pd.DataFrame,
-            protected_col: str,
-            response_col: str,
-            admissible_col: Optional[str] = None,
-            random_state: int = 0,
-            epsilon_nn: float = 1.0,
-    ) -> Tuple[float, float]:
-        """
-        (Conditional) demographic parity gap with a small neural net trained
-        with DP-SGD (via Opacus PrivacyEngine).
-
-        Returns (dp_gap, nn_loss), where nn_loss is the last-epoch average
-        training cross-entropy loss.
-        """
-        if df.empty:
-            return 0.0, 0.0
-
-        if response_col not in df.columns or protected_col not in df.columns:
-            return 0.0, 0.0
-        if admissible_col is not None and admissible_col not in df.columns:
-            admissible_col = None  # fallback gracefully
-
-        # Features: all columns except response_col
-        feature_cols = [c for c in df.columns if c != response_col]
-        if not feature_cols:
-            return 0.0, 0.0
-
-        X = df[feature_cols].to_numpy(dtype=float)
-        y_raw = df[response_col].to_numpy()
-        s = df[protected_col].to_numpy()
-        a = df[admissible_col].to_numpy() if admissible_col is not None else None
-
-        # Encode y to 0..C-1 for CrossEntropy
-        le = LabelEncoder()
-        y_enc = le.fit_transform(y_raw).astype(np.int64)
-        num_classes = len(le.classes_)
-        if num_classes < 2:
-            return 0.0, 0.0
-
-        # Optional: add Gaussian noise to features, scaled by epsilon_nn
-        if epsilon_nn is not None and epsilon_nn > 0:
-            sigma = 1.0 / float(epsilon_nn)
-            X = X + np.random.normal(loc=0.0, scale=sigma, size=X.shape)
-
-        # Scale features
-        scaler = MinMaxScaler()
-        X_scaled = scaler.fit_transform(X)
-
-        # Robust stratify handling
-        unique_labels, counts = np.unique(y_enc, return_counts=True)
-        if len(unique_labels) <= 1 or counts.min() < 2:
-            stratify_arg = None
-        else:
-            stratify_arg = y_enc
-
-        # Train/test split
-        if a is None:
-            X_train, X_test, y_train, y_test, s_train, s_test = train_test_split(
-                X_scaled, y_enc, s,
-                test_size=0.15,
-                random_state=random_state,
-                stratify=stratify_arg,
-            )
-            a_train = a_test = None
-        else:
-            X_train, X_test, y_train, y_test, s_train, s_test, a_train, a_test = train_test_split(
-                X_scaled, y_enc, s, a,
-                test_size=0.15,
-                random_state=random_state,
-                stratify=stratify_arg,
-            )
-
-        # ---- DP-SGD NN training ----
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        X_train_t = torch.tensor(X_train, dtype=torch.float32)
-        y_train_t = torch.tensor(y_train, dtype=torch.long)
-        X_test_t = torch.tensor(X_test, dtype=torch.float32)
-
-        train_ds = TensorDataset(X_train_t, y_train_t)
-        batch_size = min(1000, len(train_ds))
-        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-
-        input_dim = X_train.shape[1]
-
-        class SimpleNN(nn.Module):
-            def __init__(self, d_in, d_hidden=32, num_classes=2):
-                super().__init__()
-                self.net = nn.Sequential(
-                    nn.Linear(d_in, d_hidden),
-                    nn.ReLU(),
-                    nn.Linear(d_hidden, num_classes),
-                )
-
-            def forward(self, x):
-                return self.net(x)
-
-        model = SimpleNN(input_dim, d_hidden=32, num_classes=num_classes).to(device)
-        criterion = nn.CrossEntropyLoss()
-        optimizer = torch.optim.SGD(model.parameters(), lr=0.05, momentum=0.9)
-
-        # Attach PrivacyEngine (DP-SGD)
-        if epsilon_nn is not None and epsilon_nn > 0:
-            max_grad_norm = 1.0
-            target_epsilon = float(epsilon_nn)
-            target_delta = 1e-5
-            epochs = 10
-
-            privacy_engine = PrivacyEngine()
-            model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
-                module=model,
-                optimizer=optimizer,
-                data_loader=train_loader,
-                target_epsilon=target_epsilon,
-                target_delta=target_delta,
-                epochs=epochs,
-                max_grad_norm=max_grad_norm,
-            )
-        else:
-            epochs = 15
-
-        model.train()
-        for epoch in range(epochs):
-            epoch_loss = 0.0
-            n_batches = 0
-            for xb, yb in train_loader:
-                xb = xb.to(device)
-                yb = yb.to(device)
-                optimizer.zero_grad()
-                logits = model(xb)
-                loss = criterion(logits, yb)
-                loss.backward()
-                optimizer.step()
-                epoch_loss += loss.item()
-                n_batches += 1
-
-        # ---- DP gap AND 0-1 loss on predictions ----
-        model.eval()
-        with torch.no_grad():
-            logits_test = model(X_test_t.to(device))
-            y_pred = torch.argmax(logits_test, dim=1).cpu().numpy()
-
-        positive_label = np.max(y_pred)
-        pos = (y_pred == positive_label).astype(float)
-
-        # NN loss in [0, 1]: 1 - accuracy on test
-        nn_loss = 1.0 - accuracy_score(y_test, y_pred)
-
-        if a is None:
-            # Unconditional DP
-            rates = pd.Series(pos).groupby(pd.Series(s_test)).mean()
-            dp_gap = float(abs(rates.max() - rates.min())) if len(rates) > 0 else 0.0
-        else:
-            # Conditional DP: worst admissible group
-            df_eval = pd.DataFrame({
-                "pos": pos,
-                "s": s_test,
-                "a": a_test,
-            })
-            gaps = []
-            for _, grp in df_eval.groupby("a"):
-                rates = grp["pos"].groupby(grp["s"]).mean()
-                if len(rates) > 0:
-                    gaps.append(float(rates.max() - rates.min()))
-            dp_gap = max(gaps) if gaps else 0.0
-
-        return dp_gap, nn_loss
-
-    # ------------ main experiment ------------
-
-    all_rows = []
-    dp_values_rf = []
-    dp_values_nn = []
-    rf_losses_avg = []
-    nn_losses_avg = []
-
-    path = "data/census.csv"
-    criteria = census_criteria  # assumed defined elsewhere
-
-    plt.rcParams.update({
-        "axes.titlesize": 16,
-        "axes.labelsize": 16,
-        "xtick.labelsize": 14,
-        "ytick.labelsize": 14,
-    })
-
-    for crit_idx, criterion in enumerate(criteria, start=1):
-        data_full = _encode_and_clean_dp(path, criterion)
-        data = _encode_and_clean(path, criterion)
-        n = min(num_tuples, len(data))
-
-        sum_tvd = 0.0
-        sum_repair = 0.0
-        sum_tc = 0.0
-        sum_dp_rf = 0.0
-        sum_dp_nn = 0.0
-        sum_loss_rf = 0.0
-        sum_loss_nn = 0.0
-
-        for rep in range(repetitions):
-            sample = data_full.sample(n=n, replace=False)
-            sample_measures = sample[criterion]
-
-            tvd_proxy = ProxyMutualInformationTVD(data=sample_measures)
-            sum_tvd += float(tvd_proxy.calculate([criterion], epsilon=epsilon))
-
-            repair_proxy = ProxyRepairMaxSat(data=sample_measures)
-            sum_repair += float(repair_proxy.calculate([criterion], epsilon=epsilon))
-
-            tc_proxy = TupleContribution(data=sample_measures)
-            sum_tc += float(tc_proxy.calculate([criterion], epsilon=epsilon))
-
-            protected_col, response_col = criterion[0], criterion[1]
-            admissible_col = criterion[2] if len(criterion) == 3 else None
-
-            # dp_rf, loss_rf = demographic_parity_gap_with_rf(
-            #     df=sample,
-            #     protected_col=protected_col,
-            #     response_col=response_col,
-            #     admissible_col=admissible_col,
-            #     random_state=rep,
-            #     epsilon_rf=epsilon,
-            # )
-            dp_nn, loss_nn = demographic_parity_gap_with_nn(
-                df=sample,
-                protected_col=protected_col,
-                response_col=response_col,
-                admissible_col=admissible_col,
-                random_state=rep,
-                epsilon_nn=epsilon,
-            )
-
-            # sum_dp_rf += dp_rf
-            sum_dp_nn += dp_nn
-            # sum_loss_rf += loss_rf
-            sum_loss_nn += loss_nn
-
-        tvd_avg = sum_tvd / repetitions
-        repair_avg = sum_repair / repetitions
-        tc_avg = sum_tc / repetitions
-        # dp_rf_avg = sum_dp_rf / repetitions
-        dp_nn_avg = sum_dp_nn / repetitions
-        rf_loss_avg = sum_loss_rf / repetitions
-        nn_loss_avg = sum_loss_nn / repetitions
-
-        all_rows.append([
-            round(tvd_avg, 4),
-            repair_avg,
-            round(tc_avg, 4),
-        ])
-        # dp_values_rf.append(dp_rf_avg)
-        dp_values_nn.append(dp_nn_avg)
-        rf_losses_avg.append(rf_loss_avg)
-        nn_losses_avg.append(nn_loss_avg)
-
-        print(
-            f"Criterion {crit_idx}/{len(criteria)} {criterion}: "
-            f"RF avg loss = {rf_loss_avg:.4f}, NN avg loss = {nn_loss_avg:.4f}"
-        )
-
-    num_criteria = len(criteria)
-    x = np.arange(num_criteria)
-    criterion_numbers = [str(i) for i in range(1, num_criteria + 1)]
-    measure_labels = ["Proxy\nMutualInformationTVD", "Proxy\nRepairMaxSAT", "TupleContribution"]
-
-    # one distinct color per subplot
-    subplot_colors = ["tab:blue", "tab:orange", "tab:green"]
-
-    # ---------- main three metrics ----------
-    fig, axes = plt.subplots(
-        nrows=1,
-        ncols=3,
-        figsize=(max(8, num_criteria * 1.5), 3.5),
-        sharex=True
-    )
-    all_rows_np = np.array(all_rows, dtype=float)
-
-    for ax, mlabel, col_idx, color in zip(axes, measure_labels, [0, 1, 2], subplot_colors):
-        vals = all_rows_np[:, col_idx]
-        ax.bar(x, vals, color=color)
-        ax.set_yscale('log')
-        ax.set_title(mlabel)
-        ax.set_xticks(x)
-        ax.set_xticklabels(criterion_numbers)
-
-    for ax in axes:
-        ax.set_xlabel("criterion")
-
-    plt.tight_layout(rect=[0, 0, 1, 0.9])
-
-    dir_name = os.path.dirname(outfile)
-    if dir_name:
-        os.makedirs(dir_name, exist_ok=True)
-    plt.savefig(outfile, dpi=256, bbox_inches="tight")
-    plt.show()
-
-    # ---------- (conditional) demographic parity plots: RF and NN separately ----------
-
-    plt.rcParams.update({
-        "axes.titlesize": 18,
-        "axes.labelsize": 18,
-        "xtick.labelsize": 16,
-        "ytick.labelsize": 16,
-        "figure.titlesize": 18,
-    })
-
-    # RF DP plot
-    # dp_outfile_rf = f"{outfile.split('.')[0]}_dp_rf.png"
-    # fig_rf, ax_rf = plt.subplots(figsize=(3.5, 3.5))
-    # dp_rf_np = np.array(dp_values_rf, dtype=float)
-    # ax_rf.bar(x, dp_rf_np, color="tab:purple")
-    # ax_rf.set_xticks(x)
-    # ax_rf.set_xticklabels(criterion_numbers)
-    # ax_rf.set_xlabel("criterion")
-    # fig_rf.suptitle("Conditional Demographic\nParity gap (RF)")
-    #
-    # plt.tight_layout()
-    # dp_dir = os.path.dirname(dp_outfile_rf)
-    # if dp_dir:
-    #     os.makedirs(dp_dir, exist_ok=True)
-    # plt.savefig(dp_outfile_rf, dpi=256, bbox_inches="tight")
-    # plt.show()
-
-    # NN DP plot
-    dp_outfile_nn = f"{outfile.split('.')[0]}_dp_nn.png"
-    fig_nn, ax_nn = plt.subplots(figsize=(3.5, 3.5))
-    dp_nn_np = np.array(dp_values_nn, dtype=float)
-    ax_nn.bar(x, dp_nn_np, color="tab:gray")
-    ax_nn.set_xticks(x)
-    ax_nn.set_xticklabels(criterion_numbers)
-    ax_nn.set_xlabel("criterion")
-    fig_nn.suptitle("Conditional Demographic\nParity gap (NN+DP)")
-
-    plt.tight_layout()
-    dp_dir_nn = os.path.dirname(dp_outfile_nn)
-    if dp_dir_nn:
-        os.makedirs(dp_dir_nn, exist_ok=True)
-    plt.savefig(dp_outfile_nn, dpi=256, bbox_inches="tight")
-    plt.show()
-
-
 if __name__ == "__main__":
+    create_plot_0()
     # create_plot_1()
     # create_plot_2()
     # plot_legend()
@@ -1725,4 +1594,3 @@ if __name__ == "__main__":
     # run_experiment_4()
     # run_experiment_5()
     # run_experiment_6()
-    run_experiment_7()
