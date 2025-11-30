@@ -447,7 +447,6 @@ def run_experiment_1(
         path = spec["path"]
         criteria = spec["criteria"]
         cols_list = []
-
         for criterion in criteria:
             cols_list += criterion
         data = _encode_and_clean(path, cols_list)
@@ -551,7 +550,7 @@ def run_experiment_1(
 
 
 def run_experiment_2(
-    epsilon=None,
+    epsilon=1.0,
     num_tuples=100000,
     repetitions=5,
     outfile="plots/experiment2.png"
@@ -573,7 +572,6 @@ def run_experiment_2(
         path = spec["path"]
         criteria = spec["criteria"]
         cols_list = []
-
         for criterion in criteria:
             cols_list += criterion
         data = _encode_and_clean(path, cols_list)
@@ -699,7 +697,6 @@ def run_experiment_3(
         cols_list = []
         for criterion in criteria:
             cols_list += criterion
-        cols_list = list(dict.fromkeys(cols_list))
         data_full = _encode_and_clean(path, cols_list)
         results = {
             measure_name: {"mean": [], "min": [], "max": []}
@@ -825,7 +822,6 @@ def run_experiment_4(
         cols_list = []
         for criterion in criteria:
             cols_list += criterion
-        cols_list = list(dict.fromkeys(cols_list))
         df_full = _encode_and_clean(path, cols_list)
         n = min(num_tuples, len(df_full))
         mi_sums = {}
@@ -958,12 +954,9 @@ def run_experiment_5(
         path = spec["path"]
         criteria = spec["criteria"]
         ks_this_dataset = ks_per_dataset[ds_name]
-
         cols_list = []
         for criterion in criteria:
             cols_list += criterion
-        cols_list = list(dict.fromkeys(cols_list))
-
         data = _encode_and_clean(path, cols_list)
         stats = {"mean": [], "min": [], "max": []}
 
@@ -1099,7 +1092,6 @@ def run_experiment_6(
         cols_list = []
         for criterion in criteria:
             cols_list += criterion
-        cols_list = list(dict.fromkeys(cols_list))
         data = _encode_and_clean(path, cols_list)
         n = min(num_tuples, len(data))
         stats = {"mean": [], "min": [], "max": []}
@@ -1681,9 +1673,9 @@ if __name__ == "__main__":
     # create_plot_2()
     # plot_legend()
     # run_experiment_1()
-    # run_experiment_2()
-    # run_experiment_3()
+    run_experiment_3()
+    run_experiment_2()
     # run_experiment_4()
     # run_experiment_5()
     # run_experiment_6()
-    run_experiment_7()
+    # run_experiment_7()
