@@ -233,7 +233,7 @@ def create_plot_2():
     TICK_FS = 28  # tick labels (bottom axis + y-ticks)
     ANNOT_FS = 22  # numbers above bars
 
-    BAR_SPACING = 0.55  # <--- tighter spacing (was 0.65)
+    BAR_SPACING = 0.55
     BAR_WIDTH = 0.5
 
     # --- compute values ------------------------------------------
@@ -454,8 +454,10 @@ def run_experiment_1(
         for measure_name, measure_cls in measures.items():
             flag_timeout = False
             for num_tuples in num_tuples_this_dataset:
-                if flag_timeout or (measure_name == "Proxy RepairMaxSat" and (path == "data/census.csv" and
-                                    num_tuples > 100000) or (path == "data/stackoverflow.csv" and num_tuples > 20000)):
+                if flag_timeout or (measure_name == "Proxy RepairMaxSat" and
+                                    (path == "data/census.csv" and num_tuples > 100000) or
+                                    (path == "data/stackoverflow.csv" and num_tuples > 20000)):
+                    # Skip because Stackoverflow and Census time out
                     print("Skipping iteration due to timeout.")
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
@@ -547,7 +549,7 @@ def run_experiment_1(
 def run_experiment_2(
     epsilon=1.0,
     num_tuples=100000,
-    repetitions=5,
+    repetitions=3,
     outfile="plots/experiment2.png"
 ):
     """Plot average runtimes over `repetitions` per measure and dataset as function of the number of criteria."""
@@ -579,12 +581,9 @@ def run_experiment_2(
             flag_timeout = False
 
             for num_criteria in range(1, len(criteria) + 1):
-                num_tuples_to_use = num_tuples
-                if (measure_name == "Proxy RepairMaxSat" and path == "data/stackoverflow.csv" and num_tuples > 20000 and
-                        num_criteria >= 4):
-                    num_tuples_to_use = 20000
-
-                if flag_timeout:
+                if flag_timeout or (measure_name == "Proxy RepairMaxSat" and path == "data/stackoverflow.csv" and
+                                    num_tuples > 20000):
+                    # Skip because Stackoverflow times out on more than 20K tuples
                     print("Skipping next iterations because got timeout for smaller number of criteria.")
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
@@ -593,7 +592,7 @@ def run_experiment_2(
 
                 runtimes_rep = []
                 for _ in range(repetitions):
-                    n = min(num_tuples_to_use, len(data))
+                    n = min(num_tuples, len(data))
                     sample = data.sample(n=n, replace=False)
                     m = measure_cls(data=sample)
                     start_time = time.time()
@@ -665,7 +664,7 @@ def run_experiment_2(
 def run_experiment_3(
     epsilons=(0.1, 1, 5, 10),
     num_tuples=100000,
-    repetitions=5,
+    repetitions=3,
     outfile="plots/experiment3.png"
 ):
     """Relative L1 error as function of epsilon."""
@@ -699,13 +698,17 @@ def run_experiment_3(
         }
 
         for measure_name, measure_cls in measures.items():
-            num_tuples_to_use = num_tuples
-            if measure_name == "Proxy RepairMaxSat" and path == "data/stackoverflow.csv" and num_tuples > 20000:
-                num_tuples_to_use = 20000
-
             flag_timeout = False
+            if flag_timeout or (measure_name == "Proxy RepairMaxSat" and path == "data/stackoverflow.csv" and
+                                num_tuples > 20000):
+                # Skip because Stackoverflow times out on more than 20K tuples
+                results[measure_name]["mean"].append(np.nan)
+                results[measure_name]["min"].append(np.nan)
+                results[measure_name]["max"].append(np.nan)
+                continue
+
             errs_per_eps = [[] for _ in epsilons]
-            n = min(num_tuples_to_use, len(data_full))
+            n = min(num_tuples, len(data_full))
             for _ in range(repetitions):
                 if n < len(data_full):
                     sample = data_full.sample(n=n, replace=False)
@@ -788,7 +791,7 @@ def run_experiment_3(
 
 
 def run_experiment_4(
-        epsilon: float = None,
+        epsilon: float = 1.0,
         num_tuples: int = 100000,
         repetitions: int = 5,
         outfile: str = "plots/experiment4.png",
@@ -918,8 +921,8 @@ def run_experiment_4(
 
 def run_experiment_5(
     num_tuples=100000,
-    repetitions=10,
-    epsilon=None,
+    repetitions=5,
+    epsilon=1.0,
     outfile="plots/experiment5.png",
 ):
     """TupleContribution value as function of k, sampling separately for each repetition."""
@@ -1051,7 +1054,7 @@ def run_experiment_5(
 
 def run_experiment_6(
     num_tuples=100000,
-    repetitions=10,
+    repetitions=5,
     epsilon=1.0,
     outfile="plots/experiment6.png",
 ):
