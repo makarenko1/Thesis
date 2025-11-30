@@ -1583,7 +1583,6 @@ def run_experiment_6(
 
 
 if __name__ == "__main__":
-    create_plot_0()
     # create_plot_1()
     # create_plot_2()
     # plot_legend()
@@ -1593,4 +1592,3 @@ if __name__ == "__main__":
     # run_experiment_4()
     # run_experiment_5()
     # run_experiment_6()
-    # run_experiment_7()
