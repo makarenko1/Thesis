@@ -4,6 +4,7 @@ jax
 matplotlib
 networkx
 numpy
+opacus
 openpyxl
 pandas
 scipy
