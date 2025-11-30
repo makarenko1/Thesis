@@ -1,7 +1,7 @@
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, List, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -86,7 +86,7 @@ y_formatter = FuncFormatter(_yfmt)
 
 def create_plot_0(
         epsilon: Optional[float] = 10.0,
-        num_tuples: int = 5000,
+        num_tuples: int = 50000,
         repetitions: int = 3,
         outfile: str = "plots/plot0.png",
 ):
@@ -142,8 +142,7 @@ def create_plot_0(
             )
 
         clf = RandomForestClassifier(
-            epsilon=epsilon,
-            n_estimators=300
+            epsilon=epsilon
         )
         clf.fit(X_train, y_train)
         y_pred = clf.predict(X_test)
@@ -335,8 +334,7 @@ def create_plot_0(
     for crit_idx, criterion in enumerate(criteria, start=1):
         df = pd.read_csv(path)
         data_full = _encode_and_clean(path, df.columns)
-        data = _encode_and_clean(path, criterion)
-        n = min(num_tuples, len(data))
+        n = min(num_tuples, len(data_full))
 
         sum_tvd = 0.0
         sum_repair = 0.0
