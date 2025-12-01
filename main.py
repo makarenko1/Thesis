@@ -1333,7 +1333,7 @@ def run_experiment_4(
 def run_experiment_5(
     num_tuples=100000,
     repetitions=10,
-    epsilon=1.0,
+    epsilon=None,
     outfile="plots/experiment5.png",
 ):
     """TupleContribution value as function of k, sampling separately for each repetition."""
@@ -1591,13 +1591,13 @@ def run_experiment_6(
 
 
 if __name__ == "__main__":
-    # create_plot_0()
-    # create_plot_1()
-    # create_plot_2()
-    # plot_legend()
-    # run_experiment_1()
-    # run_experiment_2()
-    # run_experiment_3()
-    # run_experiment_4()
+    create_plot_0()
+    create_plot_1()
+    create_plot_2()
+    plot_legend()
+    run_experiment_1()
+    run_experiment_2()
+    run_experiment_3()
+    run_experiment_4()
     run_experiment_5()
     run_experiment_6()
