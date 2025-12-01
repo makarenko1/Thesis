@@ -823,7 +823,7 @@ def plot_legend(outfile="plots/legend_proxies.png"):
 
 def run_experiment_1(
     epsilon=1.0,
-    repetitions=10,
+    repetitions=3,
     outfile="plots/experiment1.png"
 ):
     """Plotting average runtimes over 'repetitions' repetitions per measure and dataset as function of
@@ -864,9 +864,10 @@ def run_experiment_1(
         for measure_name, measure_cls in measures.items():
             flag_timeout = False
             for num_tuples in num_tuples_this_dataset:
-                if flag_timeout or (measure_name == "Proxy RepairMaxSat" and
+                if (flag_timeout or (measure_name == "Proxy RepairMaxSat" and
                                     ((path == "data/census.csv" and num_tuples > 300000) or
-                                    (path == "data/stackoverflow.csv" and num_tuples > 40000))):
+                                    (path == "data/stackoverflow.csv" and num_tuples > 40000))) or
+                        (path != "data/census.csv" and path != "data/stackoverflow.csv")):
                     # Skip because Stackoverflow times out on more than 40K tuples and Census more than 300K
                     print("Skipping iteration due to timeout.")
                     results[measure_name]["mean"].append(np.nan)
@@ -959,7 +960,7 @@ def run_experiment_1(
 def run_experiment_2(
     epsilon=1.0,
     num_tuples=100000,
-    repetitions=10,
+    repetitions=3,
     outfile="plots/experiment2.png"
 ):
     """Plot average runtimes over `repetitions` per measure and dataset as function of the number of criteria."""
@@ -1074,7 +1075,7 @@ def run_experiment_2(
 def run_experiment_3(
     epsilons=(0.1, 1, 5, 10),
     num_tuples=100000,
-    repetitions=10,
+    repetitions=3,
     outfile="plots/experiment3.png"
 ):
     """Relative L1 error as function of epsilon."""
@@ -1591,13 +1592,13 @@ def run_experiment_6(
 
 
 if __name__ == "__main__":
-    create_plot_0()
-    create_plot_1()
-    create_plot_2()
-    plot_legend()
-    run_experiment_1()
+    # create_plot_0()
+    # create_plot_1()
+    # create_plot_2()
+    # plot_legend()
     run_experiment_2()
+    run_experiment_1()
     run_experiment_3()
-    run_experiment_4()
-    run_experiment_5()
-    run_experiment_6()
+    # run_experiment_4()
+    # run_experiment_5()
+    # run_experiment_6()
