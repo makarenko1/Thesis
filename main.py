@@ -857,9 +857,9 @@ def run_experiment_1(
             flag_timeout = False
             for num_tuples in num_tuples_this_dataset:
                 if flag_timeout or (measure_name == "Proxy RepairMaxSat" and
-                                    (path == "data/census.csv" and num_tuples > 100000) or
-                                    (path == "data/stackoverflow.csv" and num_tuples > 20000)):
-                    # Skip because Stackoverflow times out on more than 20K tuples and Census more than 100K
+                                    ((path == "data/census.csv" and num_tuples > 300000) or
+                                    (path == "data/stackoverflow.csv" and num_tuples > 40000))):
+                    # Skip because Stackoverflow times out on more than 40K tuples and Census more than 300K
                     print("Skipping iteration due to timeout.")
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
@@ -984,8 +984,8 @@ def run_experiment_2(
 
             for num_criteria in range(1, len(criteria) + 1):
                 if flag_timeout or (measure_name == "Proxy RepairMaxSat" and
-                                    (path == "data/stackoverflow.csv" and num_tuples > 20000)):
-                    # Skip because Stackoverflow times out on more than 20K tuples
+                                    (path == "data/stackoverflow.csv" and num_tuples > 40000 and num_criteria > 3)):
+                    # Skip because Stackoverflow times out on more than 40K tuples
                     print("Skipping next iterations because got timeout for smaller number of criteria.")
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
@@ -1102,8 +1102,8 @@ def run_experiment_3(
         for measure_name, measure_cls in measures.items():
             flag_timeout = False
             if flag_timeout or (measure_name == "Proxy RepairMaxSat" and
-                                (path == "data/stackoverflow.csv" and num_tuples > 20000)):
-                # Skip because Stackoverflow times out on more than 20K tuples
+                                (path == "data/stackoverflow.csv" and num_tuples > 40000)):
+                # Skip because Stackoverflow times out on more than 40K tuples
                 for _ in epsilons:
                     results[measure_name]["mean"].append(np.nan)
                     results[measure_name]["min"].append(np.nan)
