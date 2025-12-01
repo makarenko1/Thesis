@@ -87,7 +87,7 @@ y_formatter = FuncFormatter(_yfmt)
 def create_plot_0(
         epsilon: Optional[float] = 10.0,
         num_tuples: int = 10000,
-        repetitions: int = 3,
+        repetitions: int = 10,
         outfile: str = "plots/plot0.png",
 ):
     """Values of measures for IPUMS-CPS (for criterions with more unfairness we expect higher values)."""
@@ -130,18 +130,22 @@ def create_plot_0(
         if a is None:
             X_train, X_test, y_train, y_test, s_train, s_test = train_test_split(
                 X_scaled, y, s,
-                test_size=0.15,
+                test_size=0.3,
                 stratify=stratify_arg,
             )
             a_train, a_test = None, None
         else:
             X_train, X_test, y_train, y_test, s_train, s_test, a_train, a_test = train_test_split(
                 X_scaled, y, s, a,
-                test_size=0.15,
+                test_size=0.3,
                 stratify=stratify_arg,
             )
 
         clf = RandomForestClassifier(
+            n_estimators=20,
+            max_depth=15,
+            shuffle=True,
+            classes=[0, 1],
             epsilon=epsilon
         )
         clf.fit(X_train, y_train)
@@ -231,7 +235,7 @@ def create_plot_0(
         y_train_t = torch.tensor(y_train, dtype=torch.long)
         X_test_t = torch.tensor(X_test, dtype=torch.float32)
         train_ds = TensorDataset(X_train_t, y_train_t)
-        batch_size = min(1000, len(train_ds))
+        batch_size = min(100, len(train_ds))
         train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
         input_dim = X_train.shape[1]
 
@@ -256,7 +260,7 @@ def create_plot_0(
             max_grad_norm = 1.0
             target_epsilon = epsilon
             target_delta = 1e-5
-            epochs = 50
+            epochs = 150
             privacy_engine = PrivacyEngine()
             model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
                 module=model,
@@ -268,7 +272,7 @@ def create_plot_0(
                 max_grad_norm=max_grad_norm,
             )
         else:
-            epochs = 50
+            epochs = 150
         model.train()
         for epoch in range(epochs):
             epoch_loss = 0.0
@@ -441,7 +445,6 @@ def create_plot_0(
     plt.show()
 
     # ---------- demographic parity plots: RF and NN separately ----------
-
     plt.rcParams.update({
         "axes.titlesize": 18,
         "axes.labelsize": 18,
@@ -515,10 +518,15 @@ def create_plot_1():
     # --- compute values
     vals = {k: {} for _, k in PROXIES}
     for ds_name, ds_config in datasets_shortened.items():
-        path, attrs = ds_config["path"], ds_config["criteria"]
+        path, criteria = ds_config["path"], ds_config["criteria"]
         mi_scores, priv_scores_orig, priv_scores_offset, tvd_scores = [], [], [], []
-        for s_col, o_col, a_col in attrs:
-            mi_scores.append(MutualInformation(datapath=path).calculate([[s_col, o_col, a_col]],
+        for criterion in criteria:
+            if len(criterion) == 3:
+                s_col, o_col, a_col = criterion
+            else:
+                s_col, o_col = criterion
+                a_col = None
+            mi_scores.append(MutualInformation(datapath=path).calculate([criterion],
                                                                         encode_and_clean=True))
             priv_scores_orig.append(ProxyMutualInformationPrivbayes(datapath=path).calculate(
                 s_col, o_col, a_col, add_offset=False
@@ -527,7 +535,7 @@ def create_plot_1():
                 s_col, o_col, a_col
             ))
             tvd_scores.append(ProxyMutualInformationTVD(datapath=path).calculate(
-                [[s_col, o_col, a_col]], encode_and_clean=True
+                [criterion], encode_and_clean=True
             ))
         vals["MI"][ds_name] = mi_scores
         vals["PRIV_ORIG"][ds_name] = priv_scores_orig
@@ -641,14 +649,14 @@ def create_plot_2():
     # --- compute values ------------------------------------------
     vals = {k: {} for _, k in MEASURES}
     for ds_name, ds_config in datasets_shortened.items():
-        path, attrs = ds_config["path"], ds_config["criteria"]
+        path, criteria = ds_config["path"], ds_config["criteria"]
         tvd_scores, auc_scores = [], []
-        for s_col, o_col, a_col in attrs:
+        for criterion in criteria:
             tvd_scores.append(ProxyMutualInformationTVD(datapath=path).calculate(
-                [[s_col, o_col, a_col]], encode_and_clean=True
+                [criterion], encode_and_clean=True
             ))
             auc_scores.append(TupleContribution(datapath=path).calculate(
-                [[s_col, o_col, a_col]], encode_and_clean=True
+                [criterion], encode_and_clean=True
             ))
         vals["TVD"][ds_name] = tvd_scores
         vals["AUC"][ds_name] = auc_scores
@@ -815,7 +823,7 @@ def plot_legend(outfile="plots/legend_proxies.png"):
 
 def run_experiment_1(
     epsilon=1.0,
-    repetitions=5,
+    repetitions=10,
     outfile="plots/experiment1.png"
 ):
     """Plotting average runtimes over 'repetitions' repetitions per measure and dataset as function of
@@ -951,7 +959,7 @@ def run_experiment_1(
 def run_experiment_2(
     epsilon=1.0,
     num_tuples=100000,
-    repetitions=3,
+    repetitions=10,
     outfile="plots/experiment2.png"
 ):
     """Plot average runtimes over `repetitions` per measure and dataset as function of the number of criteria."""
@@ -1066,7 +1074,7 @@ def run_experiment_2(
 def run_experiment_3(
     epsilons=(0.1, 1, 5, 10),
     num_tuples=100000,
-    repetitions=3,
+    repetitions=10,
     outfile="plots/experiment3.png"
 ):
     """Relative L1 error as function of epsilon."""
@@ -1196,7 +1204,7 @@ def run_experiment_3(
 def run_experiment_4(
         epsilon: float = 1.0,
         num_tuples: int = 100000,
-        repetitions: int = 5,
+        repetitions: int = 10,
         outfile: str = "plots/experiment4.png",
 ):
     """
@@ -1324,8 +1332,8 @@ def run_experiment_4(
 
 def run_experiment_5(
     num_tuples=100000,
-    repetitions=5,
-    epsilon=1.0,
+    repetitions=10,
+    epsilon=None,
     outfile="plots/experiment5.png",
 ):
     """TupleContribution value as function of k, sampling separately for each repetition."""
@@ -1457,7 +1465,7 @@ def run_experiment_5(
 
 def run_experiment_6(
     num_tuples=100000,
-    repetitions=5,
+    repetitions=10,
     epsilon=1.0,
     outfile="plots/experiment6.png",
 ):
@@ -1583,12 +1591,13 @@ def run_experiment_6(
 
 
 if __name__ == "__main__":
-    # create_plot_1()
-    # create_plot_2()
-    # plot_legend()
+    create_plot_0()
+    create_plot_1()
+    create_plot_2()
+    plot_legend()
     run_experiment_1()
-    # run_experiment_3()
-    # run_experiment_2()
-    # run_experiment_4()
-    # run_experiment_5()
-    # run_experiment_6()
+    run_experiment_2()
+    run_experiment_3()
+    run_experiment_4()
+    run_experiment_5()
+    run_experiment_6()
