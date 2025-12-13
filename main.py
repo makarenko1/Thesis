@@ -1725,7 +1725,7 @@ def run_experiment_8(
     epsilon: Optional[float] = None,
     n_per_sex: int = 500,                 # 500 males, 500 females
     step: float = 0.1,                    # switch 10% each iteration
-    repetitions: int = 15,
+    repetitions: int = 10,
     outfile: str = "plots/experiment8.png",
 ):
     """
