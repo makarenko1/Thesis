@@ -37,7 +37,7 @@ class ProxyRepairMaxSat:
         fairness_criteria,
         epsilon=None,
         encode_and_clean=False,
-        chunk_size: int | None = None,
+        chunk_size: int | None = 100,
         soft_clauses_percentage: float = 1.0,
     ):
         """
