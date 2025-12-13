@@ -2,6 +2,7 @@ import time
 from collections import defaultdict
 from itertools import combinations
 
+import duckdb
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
@@ -36,7 +37,7 @@ class ProxyRepairMaxSat:
         fairness_criteria,
         epsilon=None,
         encode_and_clean=False,
-        chunk_size: int | None = 100,
+        chunk_size: int | None = None,
         soft_clauses_percentage: float = 1.0,
     ):
         """
@@ -209,12 +210,7 @@ class ProxyRepairMaxSat:
         return tuple(sorted([f"x_{t1}", f"x_{t2}", f"x_{t3}"]))
 
     @staticmethod
-    def _conversion_to_solving_general_3cnf(
-        D,
-        admissible_col,
-        opt,
-        soft_clauses_percentage: float,
-    ):
+    def _conversion_to_solving_general_3cnf(D, admissible_col, opt, soft_clauses_percentage: float):
         """
         Converts a dataset into a 3-CNF MaxSAT formulation.
 
@@ -243,12 +239,11 @@ class ProxyRepairMaxSat:
         D_set = set(D)
         arr = np.array(D, dtype=object)
 
-        # ----- Build D_star using pandas joins -----
         if admissible_col is not None:
             # D elements: (s, o, a, id)
             dfD = pd.DataFrame(arr, columns=["s", "o", "a", "id"])
 
-            # D_star is union over a of cartesian product S(a) x O(a)
+            # ---- jdb construction (your D_star_df) ----
             dstar_frames = []
             for a_val, group in dfD.groupby("a"):
                 S_df = group[["s"]].drop_duplicates()
@@ -259,92 +254,70 @@ class ProxyRepairMaxSat:
                 cart["a"] = a_val
                 dstar_frames.append(cart)
 
-            if dstar_frames:
-                D_star_df = pd.concat(dstar_frames, ignore_index=True)
-            else:
-                D_star_df = pd.DataFrame(columns=["s", "o", "a", "id"])
-
-            # Convert D_star_df to set of tuples
-            D_star = set(
-                D_star_df[["s", "o", "a", "id"]].itertuples(index=False, name=None)
+            D_star_df = (
+                pd.concat(dstar_frames, ignore_index=True)
+                if dstar_frames
+                else pd.DataFrame(columns=["s", "o", "id", "a"])
             )
 
-            # Soft clauses (subset controlled by soft_clauses_percentage)
-            if soft_clauses_percentage > 0.0:
-                if soft_clauses_percentage >= 1.0:
-                    # Add all soft clauses
-                    for row in D_star_df.itertuples(index=False):
-                        t = (row.s, row.o, row.a, row.id)
-                        x_t = v(t)
-                        opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
-                else:
-                    # Randomly sample soft clauses
-                    for row in D_star_df.itertuples(index=False):
-                        if np.random.random() < soft_clauses_percentage:
-                            t = (row.s, row.o, row.a, row.id)
-                            x_t = v(t)
-                            opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
+            # D_star = set of tuples (this is the variable universe)
+            D_star = set(D_star_df[["s", "o", "a", "id"]].itertuples(index=False, name=None))
 
-            # Hard clauses: use unique S and O from original dfD
-            for a_val, group in dfD.groupby("a"):
+            # ---- soft clauses over jdb ----
+            if soft_clauses_percentage > 0.0:
+                for t in D_star:
+                    if soft_clauses_percentage < 1.0 and np.random.random() >= soft_clauses_percentage:
+                        continue
+                    x_t = v(t)
+                    opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
+
+            # ---- hard clauses over jdb x jdb ----
+            # Iterate per a over jdb
+            for a_val, group in D_star_df.groupby("a"):
                 S_vals = group["s"].unique()
                 O_pairs = group[["o", "id"]].drop_duplicates().to_records(index=False)
                 O_pairs = list(O_pairs)
 
                 for (o1, i1), (o2, i2) in combinations(O_pairs, 2):
-                    if (o1, i1) == (o2, i2):
-                        continue
                     for s1, s2 in combinations(S_vals, 2):
-                        if s1 == s2:
-                            continue
                         t1 = (s1, o1, a_val, i1)
                         t2 = (s2, o2, a_val, i2)
                         t3 = (s1, o2, a_val, i2)
                         opt.add(Or(Not(v(t1)), Not(v(t2)), v(t3)))
 
+            return D_star
+
         else:
             # D elements: (s, o, id)
             dfD = pd.DataFrame(arr, columns=["s", "o", "id"])
 
-            # D_star is cartesian product S x O
+            # ---- jdb construction: S × (o,id) ----
             S_df = dfD[["s"]].drop_duplicates()
             O_df = dfD[["o", "id"]].drop_duplicates()
             S_df["key"] = 1
             O_df["key"] = 1
             D_star_df = S_df.merge(O_df, on="key").drop("key", axis=1)
 
-            D_star = set(
-                D_star_df[["s", "o", "id"]].itertuples(index=False, name=None)
-            )
+            D_star = set(D_star_df[["s", "o", "id"]].itertuples(index=False, name=None))
 
-            # Soft clauses
+            # ---- soft clauses ----
             if soft_clauses_percentage > 0.0:
-                if soft_clauses_percentage >= 1.0:
-                    for row in D_star_df.itertuples(index=False):
-                        t = (row.s, row.o, row.id)
-                        x_t = v(t)
-                        opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
-                else:
-                    for row in D_star_df.itertuples(index=False):
-                        if np.random.random() < soft_clauses_percentage:
-                            t = (row.s, row.o, row.id)
-                            x_t = v(t)
-                            opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
+                for t in D_star:
+                    if soft_clauses_percentage < 1.0 and np.random.random() >= soft_clauses_percentage:
+                        continue
+                    x_t = v(t)
+                    opt.add_soft(x_t if t in D_set else Not(x_t), weight=1)
 
-            # Hard clauses using unique S and O from dfD
-            S_vals = dfD["s"].unique()
-            O_pairs = dfD[["o", "id"]].drop_duplicates().to_records(index=False)
+            # ---- hard clauses over jdb x jdb ----
+            S_vals = D_star_df["s"].unique()
+            O_pairs = D_star_df[["o", "id"]].drop_duplicates().to_records(index=False)
             O_pairs = list(O_pairs)
 
             for (o1, i1), (o2, i2) in combinations(O_pairs, 2):
-                if (o1, i1) == (o2, i2):
-                    continue
                 for s1, s2 in combinations(S_vals, 2):
-                    if s1 == s2:
-                        continue
                     t1 = (s1, o1, i1)
                     t2 = (s2, o2, i2)
                     t3 = (s1, o2, i2)
                     opt.add(Or(Not(v(t1)), Not(v(t2)), v(t3)))
 
-        return D_star
+            return D_star
